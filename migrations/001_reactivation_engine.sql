@@ -189,7 +189,7 @@ SELECT
   count(*) FILTER (WHERE ct.status = 'exhausted')     AS exhausted,
   count(*) FILTER (WHERE ct.status = 'opted_out')     AS opted_out,
   count(*) FILTER (WHERE ct.status = 'invalid_phone') AS bad_numbers,
-  count(*)                                            AS total,
+  count(ct.id)                                        AS total,
   round(100.0 * count(*) FILTER (WHERE ct.status IN ('reached','appointment'))
         / nullif(count(*) FILTER (WHERE ct.status <> 'eligible'), 0), 1) AS reach_pct_of_worked
 FROM re_cohort c

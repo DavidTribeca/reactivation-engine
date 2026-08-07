@@ -16,10 +16,13 @@
     "reactivate:status": "node scripts/run-dispatch.js status",
     "reactivate:health": "node scripts/health-check.js",
     "reactivate:sync": "node scripts/sync-suppression.js",
-    "reactivate:sync:full": "node scripts/sync-suppression.js --full"
+    "reactivate:sync:full": "node scripts/sync-suppression.js --full",
+    "start": "node src/server.js"
   },
   "dependencies": {
     "express": "^4.22.2",
-    "pg": "^8.22.0"
-  }
+    "pg": "^8.22.0",
+    "node-cron": "^3.0.3"
+  },
+  "main": "src/server.js"
 }
