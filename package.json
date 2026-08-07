@@ -1,0 +1,25 @@
+{
+  "name": "reactivation-engine",
+  "version": "1.0.0",
+  "type": "module",
+  "private": true,
+  "description": "Cohort-based automation for the SimpleTalk 30k database program",
+  "scripts": {
+    "reactivate:simulate": "node scripts/simulate.js",
+    "reactivate:test": "node scripts/integration-test.js",
+    "reactivate:import": "node scripts/import-from-fub.js",
+    "reactivate:import:dry": "node scripts/import-from-fub.js --dry-run",
+    "reactivate:dispatch": "node scripts/run-dispatch.js dispatch",
+    "reactivate:dispatch:dry": "node scripts/run-dispatch.js dispatch --dry-run",
+    "reactivate:reap": "node scripts/run-dispatch.js reap",
+    "reactivate:rollup": "node scripts/run-dispatch.js rollup",
+    "reactivate:status": "node scripts/run-dispatch.js status",
+    "reactivate:health": "node scripts/health-check.js",
+    "reactivate:sync": "node scripts/sync-suppression.js",
+    "reactivate:sync:full": "node scripts/sync-suppression.js --full"
+  },
+  "dependencies": {
+    "express": "^4.22.2",
+    "pg": "^8.22.0"
+  }
+}

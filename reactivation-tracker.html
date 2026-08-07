@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SimpleTalk Reactivation — Program Tracker</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f3f0;
+    --surface-1: #fcfcfb;
+    --surface-2: #eeede9;
+    --border:    #dedcd6;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #78766f;
+    --series-1: #2a78d6;
+    --series-2: #eb6834;
+    --series-3: #1baf7a;
+    --good: #0ca30c;
+    --warning: #fab219;
+    --critical: #d03b3b;
+    /* ordinal ramp on light: nothing lighter than step 250 (#86b6ef, 2.06:1) */
+    --seq-100:#86b6ef; --seq-250:#5598e7; --seq-450:#2a78d6; --seq-600:#184f95;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #111110;
+    --surface-1: #1a1a19;
+    --surface-2: #242422;
+    --border:    #383835;
+    --text-primary:   #ffffff;
+    --text-secondary: #c3c2b7;
+    --text-muted:     #94938b;
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    /* ordinal ramp on dark: nothing darker than step 600 (#184f95, 2.15:1) */
+    --seq-100:#184f95; --seq-250:#256abf; --seq-450:#3987e5; --seq-600:#86b6ef;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--surface-0); color: var(--text-primary);
+    font: 15px/1.55 ui-sans-serif, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 1120px; margin: 0 auto; padding: 32px 24px 72px; }
+  header.top { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 8px; }
+  h1 { font-size: 25px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--text-secondary); font-size: 14px; margin: 0; }
+  button.theme {
+    background: var(--surface-1); color: var(--text-secondary); border: 1px solid var(--border);
+    border-radius: 8px; padding: 7px 13px; cursor: pointer; font-size: 13px; font-family: inherit;
+  }
+  button.theme:hover { color: var(--text-primary); }
+  h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.09em;
+       color: var(--text-muted); margin: 38px 0 14px; font-weight: 600; }
+  .card { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 20px 22px; }
+  .grid { display: grid; gap: 14px; }
+  .g4 { grid-template-columns: repeat(4, 1fr); }
+  .g3 { grid-template-columns: repeat(3, 1fr); }
+  .g2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 860px) { .g4, .g3, .g2 { grid-template-columns: 1fr 1fr; } }
+  @media (max-width: 560px) { .g4, .g3, .g2 { grid-template-columns: 1fr; } }
+  .tile .lab { font-size: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; }
+  .tile .val { font-size: 31px; font-weight: 650; letter-spacing: -0.025em; margin: 5px 0 2px; font-variant-numeric: tabular-nums; }
+  .tile .note { font-size: 12.5px; color: var(--text-secondary); }
+  .bar-row { display: grid; grid-template-columns: 190px 1fr 84px; align-items: center; gap: 12px; margin-bottom: 9px; }
+  .bar-row .name { font-size: 13.5px; color: var(--text-secondary); }
+  .bar-track { background: var(--surface-2); border-radius: 4px; height: 22px; overflow: hidden; }
+  .bar-fill { height: 100%; border-radius: 0 4px 4px 0; }
+  .bar-row .num { text-align: right; font-variant-numeric: tabular-nums; font-size: 13.5px; font-weight: 600; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align: left; font-weight: 600; color: var(--text-muted); font-size: 11.5px;
+       text-transform: uppercase; letter-spacing: 0.06em; padding: 0 10px 9px 0; border-bottom: 1px solid var(--border); }
+  td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
+  .pill { display: inline-flex; align-items: center; gap: 5px; font-size: 11.5px; font-weight: 600;
+          padding: 3px 9px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+  .p-done { color: var(--good); border-color: var(--good); }
+  .p-block { color: var(--critical); border-color: var(--critical); }
+  .p-wait { color: var(--warning); border-color: var(--warning); }
+  .meter { height: 9px; background: var(--surface-2); border-radius: 999px; overflow: hidden; margin-top: 12px; }
+  .meter > i { display: block; height: 100%; border-radius: 999px; background: var(--good); }
+  p { color: var(--text-secondary); }
+  p.tight { margin: 0 0 12px; }
+  code { background: var(--surface-2); padding: 1.5px 5px; border-radius: 4px;
+         font: 12.5px ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--text-primary); }
+  pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 13px 15px;
+        overflow-x: auto; font: 12.5px/1.6 ui-monospace, "SF Mono", Menlo, Consolas, monospace; color: var(--text-primary); }
+  .legend { display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px; font-size: 12.5px; color: var(--text-secondary); }
+  .legend span { display: inline-flex; align-items: center; gap: 6px; }
+  .sw { width: 11px; height: 11px; border-radius: 3px; display: inline-block; }
+  .foot { margin-top: 44px; padding-top: 18px; border-top: 1px solid var(--border);
+          font-size: 12.5px; color: var(--text-muted); }
+  .callout { border-left: 3px solid var(--series-1); padding: 2px 0 2px 15px; margin: 16px 0; }
+  .callout.warn { border-left-color: var(--warning); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <h1>SimpleTalk Database Reactivation</h1>
+    <p class="sub">Tribeca NW · Program tracker · Plan v5 · figures verified against the live FUB account 6 Aug 2026</p>
+  </div>
+  <button class="theme" onclick="var r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'">Toggle theme</button>
+</header>
+
+<h2>Where the program stands</h2>
+<div class="grid g4">
+  <div class="card tile"><div class="lab">Target set</div><div class="val">23,563</div><div class="note">of 31,416 in FUB</div></div>
+  <div class="card tile"><div class="lab">Projected length</div><div class="val">6.2 mo</div><div class="note">peak 750 dials/day</div></div>
+  <div class="card tile"><div class="lab">Phase</div><div class="val" style="color:var(--warning)">Pre-launch</div><div class="note">integration pending</div></div>
+  <div class="card tile"><div class="lab">Engine tests</div><div class="val" style="color:var(--good)">31/31</div><div class="note">against live Postgres</div></div>
+</div>
+
+<h2>Build readiness</h2>
+<div class="card">
+  <p class="tight">Logic is complete and tested. Everything outstanding is integration, and all of it is GHL-shaped.</p>
+  <div class="meter"><i style="width:82%"></i></div>
+  <p class="tight" style="margin-top:9px;font-size:13px">12 of 15 components verified · 82%</p>
+  <table style="margin-top:14px">
+    <thead><tr><th>Component</th><th>Status</th><th>Evidence</th></tr></thead>
+    <tbody>
+      <tr><td>Schema — 3 migrations</td><td><span class="pill p-done">✓ verified</span></td><td>Applies clean to PG16, idempotent</td></tr>
+      <tr><td>Queue state machine</td><td><span class="pill p-done">✓ verified</span></td><td>31 integration tests</td></tr>
+      <tr><td>Attempt ladder, rotating windows</td><td><span class="pill p-done">✓ verified</span></td><td>DST-safe; no Sunday or out-of-hours dials</td></tr>
+      <tr><td>Throttle — green/yellow/red</td><td><span class="pill p-done">✓ verified</span></td><td>Trailing 7-day counts, min-sample guards</td></tr>
+      <tr><td>Flow control — 3 ceilings</td><td><span class="pill p-done">✓ verified</span></td><td>In-flight ceiling tested holding and releasing</td></tr>
+      <tr><td>Dispatcher + wave auto-backfill</td><td><span class="pill p-done">✓ verified</span></td><td>Zero idle days with backlog, in simulation</td></tr>
+      <tr><td>Suppression sync</td><td><span class="pill p-done">✓ verified</span></td><td>Append-only, sanity guard, 15-min + nightly full</td></tr>
+      <tr><td>Suppression freshness gate</td><td><span class="pill p-done">✓ verified</span></td><td>Dispatcher refuses to dial on stale sync</td></tr>
+      <tr><td>FUB adapter</td><td><span class="pill p-done">✓ verified</span></td><td>Tested against the live API</td></tr>
+      <tr><td>Targeting rule</td><td><span class="pill p-done">✓ verified</span></td><td>31,416 → 23,563, reproducible</td></tr>
+      <tr><td>Caller-ID rotation + health view</td><td><span class="pill p-done">✓ verified</span></td><td>Per-number caps and retire recommendation</td></tr>
+      <tr><td>Tracking views</td><td><span class="pill p-done">✓ verified</span></td><td>4 views execute</td></tr>
+      <tr><td>GHL endpoints (upsert, enrol)</td><td><span class="pill p-block">blocked</span></td><td>Shapes unconfirmed — docs unreachable</td></tr>
+      <tr><td>GHL webhook event mapping</td><td><span class="pill p-block">blocked</span></td><td>Event names are educated guesses</td></tr>
+      <tr><td>Rollover feed into throttle</td><td><span class="pill p-wait">waiting</span></td><td>Throttle runs on 2 of 3 signals until wired</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>How the system meters itself</h2>
+<div class="card">
+  <p class="tight">Three independent ceilings govern how much is in flight at any moment. Every dispatcher run takes the <em>smallest</em> of them, so no single mechanism has to be right on its own.</p>
+  <div class="grid g3" style="margin-top:16px">
+    <div>
+      <div class="lab" style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">1 · Daily target</div>
+      <p style="font-size:13.5px;margin:6px 0">Set by the throttle from the trailing 7 days. Green steps volume up 25%, yellow holds, red halves it. Floor 100, ceiling 750.</p>
+    </div>
+    <div>
+      <div class="lab" style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">2 · Window share</div>
+      <p style="font-size:13.5px;margin:6px 0">Spreads the day across dialing windows — 45% by mid-morning, 75% cumulative by late afternoon, 100% by evening. Stops the 10am run dumping a whole day at once.</p>
+    </div>
+    <div>
+      <div class="lab" style="font-size:12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:.06em">3 · In-flight ceiling</div>
+      <p style="font-size:13.5px;margin:6px 0">Never more than 60% of the daily target awaiting an outcome. If SimpleTalk slows, outcomes stop arriving, in-flight stays high, and intake pauses on its own.</p>
+    </div>
+  </div>
+  <div class="callout">
+    <p class="tight" style="font-size:13.5px"><strong>Adding is automatic; removing is event-driven.</strong> A contact enters when <code>next_eligible_at</code> comes due and there's room under all three ceilings. It leaves in-flight the moment an outcome lands — reached, booked, opted out, or bad number are terminal; a no-answer goes back on the ladder with a new date. Anything stuck longer than 20 hours gets reaped as a no-answer, so a missed webhook can't park someone forever.</p>
+  </div>
+  <p class="tight" style="margin-top:4px">At a 750/day peak that means roughly <strong>340 in flight at the busiest point</strong>, about 180 genuinely new people entering per day, and the remaining ~570 dials are retries on people already in the system.</p>
+</div>
+
+<h2>Target composition</h2>
+<div class="card">
+  <div class="legend">
+    <span><i class="sw" style="background:var(--series-1)"></i>In the target</span>
+    <span><i class="sw" style="background:var(--series-2)"></i>Excluded</span>
+  </div>
+  <div class="bar-row"><div class="name">Target</div><div class="bar-track"><div class="bar-fill" style="width:75.0%;background:var(--series-1)"></div></div><div class="num">23,563</div></div>
+  <div class="bar-row"><div class="name">Held by a selling agent</div><div class="bar-track"><div class="bar-fill" style="width:12.4%;background:var(--series-2)"></div></div><div class="num">3,903</div></div>
+  <div class="bar-row"><div class="name">Bad or duplicate phone</div><div class="bar-track"><div class="bar-fill" style="width:6.1%;background:var(--series-2)"></div></div><div class="num">1,921</div></div>
+  <div class="bar-row"><div class="name">DNC ponds (4, 50)</div><div class="bar-track"><div class="bar-fill" style="width:3.5%;background:var(--series-2)"></div></div><div class="num">1,106</div></div>
+  <div class="bar-row"><div class="name">Active pipeline</div><div class="bar-track"><div class="bar-fill" style="width:2.5%;background:var(--series-2)"></div></div><div class="num">779</div></div>
+  <div class="bar-row"><div class="name">DNC stages</div><div class="bar-track"><div class="bar-fill" style="width:0.5%;background:var(--series-2)"></div></div><div class="num">144</div></div>
+</div>
+
+<h2>Waves — 70.7% of the target is over three years old</h2>
+<div class="card">
+  <div class="bar-row"><div class="name">Wave 1 · 0–90 days</div><div class="bar-track"><div class="bar-fill" style="width:2.4%;background:var(--seq-600)"></div></div><div class="num">403</div></div>
+  <div class="bar-row"><div class="name">Wave 2 · 91–365 days</div><div class="bar-track"><div class="bar-fill" style="width:7.7%;background:var(--seq-450)"></div></div><div class="num">1,281</div></div>
+  <div class="bar-row"><div class="name">Wave 3 · 1–3 years</div><div class="bar-track"><div class="bar-fill" style="width:31.3%;background:var(--seq-250)"></div></div><div class="num">5,218</div></div>
+  <div class="bar-row"><div class="name">Wave 4 · 3+ years</div><div class="bar-track"><div class="bar-fill" style="width:100%;background:var(--seq-100)"></div></div><div class="num">16,661</div></div>
+  <p class="tight" style="margin-top:14px">Modelled answer rates fall with age — 15%, 13%, 10%, 7% — for a blended 8.1%. The fresh pool is 403 people, so this is a dormant-database reactivation almost end to end. Write the script for someone who last heard from you three years ago.</p>
+</div>
+
+<h2>Projected outcome — replace with measured data after Wave 0</h2>
+<div class="card">
+  <p class="tight" style="margin-bottom:16px">Bars show <strong>conversion from the previous stage</strong>, not absolute size — a funnel drawn to absolute scale makes everything below "reached" invisible.</p>
+  <table>
+    <thead><tr><th>Stage</th><th style="width:34%">Conversion from previous</th><th class="n" style="text-align:right">Count</th></tr></thead>
+    <tbody>
+      <tr><td>Dials</td><td><span style="color:var(--text-muted);font-size:12.5px">— baseline —</span></td><td class="n"><strong>~99,000</strong></td></tr>
+      <tr><td>People reached</td>
+        <td><div class="bar-track" style="height:16px"><div class="bar-fill" style="width:8.5%;background:var(--series-1)"></div></div><span style="font-size:11.5px;color:var(--text-secondary)">8.5% of dials</span></td>
+        <td class="n"><strong>8,439</strong></td></tr>
+      <tr><td>Right-party conversations</td>
+        <td><div class="bar-track" style="height:16px"><div class="bar-fill" style="width:65%;background:var(--series-1)"></div></div><span style="font-size:11.5px;color:var(--text-secondary)">65% of reached</span></td>
+        <td class="n"><strong>~5,500</strong></td></tr>
+      <tr><td>Qualified</td>
+        <td><div class="bar-track" style="height:16px"><div class="bar-fill" style="width:15%;background:var(--series-3)"></div></div><span style="font-size:11.5px;color:var(--text-secondary)">12–18% of RPC</span></td>
+        <td class="n"><strong>660–990</strong></td></tr>
+      <tr><td>Appointments set</td>
+        <td><div class="bar-track" style="height:16px"><div class="bar-fill" style="width:55%;background:var(--series-3)"></div></div><span style="font-size:11.5px;color:var(--text-secondary)">55% of qualified</span></td>
+        <td class="n"><strong>360–545</strong></td></tr>
+      <tr><td>Appointments held</td>
+        <td><div class="bar-track" style="height:16px"><div class="bar-fill" style="width:70%;background:var(--series-3)"></div></div><span style="font-size:11.5px;color:var(--text-secondary)">70% show rate</span></td>
+        <td class="n"><strong>255–380</strong></td></tr>
+      <tr><td>Signed clients</td>
+        <td><div class="bar-track" style="height:16px"><div class="bar-fill" style="width:22%;background:var(--series-3)"></div></div><span style="font-size:11.5px;color:var(--text-secondary)">20–25% of held</span></td>
+        <td class="n"><strong>51–95</strong></td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p class="tight" style="font-size:13.5px">⚠ Everything below "people reached" rests on assumed conversion ratios, not your data. The reach figure itself depends on modelled answer rates. Wave 0's two weeks of calibration replaces all of it.</p>
+  </div>
+</div>
+
+<h2>Blockers</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>Item</th><th>Owner</th><th>Why it blocks</th></tr></thead>
+    <tbody>
+      <tr><td><strong>GHL workflow ID</strong></td><td>Gabriel</td><td>The dial actuator. Without it the dispatcher has nothing to push into.</td></tr>
+      <tr><td><strong>GHL API token</strong></td><td>Gabriel</td><td>Needed to verify endpoints and to measure the real answer rate.</td></tr>
+      <tr><td><strong>8–10 phone numbers</strong></td><td>Gabriel</td><td>Longest lead time of anything here — provisioning, Free Caller Registry, STIR/SHAKEN. Start first.</td></tr>
+      <tr><td>Verify GHL endpoint shapes</td><td>Claude</td><td>Two unconfirmed API calls; one test contact settles it.</td></tr>
+      <tr><td>Rewire outcome feed</td><td>Claude</td><td>Use the proven SimpleTalk ingest instead of unverified GHL webhooks.</td></tr>
+      <tr><td>Wire rollover into throttle</td><td>Claude</td><td>Throttle's most important signal is currently absent.</td></tr>
+      <tr><td>Delete the temporary FUB key</td><td>Gabriel</td><td>Created for the profiling scan; its work is done.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>Go-live sequence</h2>
+<div class="card">
+  <table>
+    <thead><tr><th style="width:78px">Day</th><th>Action</th><th>Gate before proceeding</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td>Apply migrations. Import from FUB. Run suppression sync. <strong>No dialing.</strong></td><td>Target lands near 23,400; suppression near 2,100</td></tr>
+      <tr><td>2</td><td>Dispatch dry-run — inspect exactly who would be called, in order</td><td>You recognise the names at the top</td></tr>
+      <tr><td>3</td><td>Enable suppression sync; deliberately stale it and confirm the gate blocks dialing</td><td>Gate confirmed</td></tr>
+      <tr><td>4</td><td>First live dial — 100/day, one cohort, mid-morning only</td><td>No out-of-window dials; opt-outs suppress within the hour</td></tr>
+      <tr><td>5–14</td><td>Calibration. Measure answer, right-party, qualification, appointment rates</td><td>Five consecutive green days</td></tr>
+      <tr><td>15</td><td>First throttle review; ramp begins 100 → 125 → 156 → 195…</td><td>Rollover under 5%</td></tr>
+      <tr><td>~Wk 8</td><td>Reach 750/day steady state</td><td>—</td></tr>
+      <tr><td>~Mo 6</td><td>Target set worked through</td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p class="tight" style="margin-top:14px">Day 4's constraint matters more than it looks. One cohort, one window, 100 dials is a deliberately small blast radius — integration bugs surface on the first live batch, and they should surface against 100 records rather than 750.</p>
+</div>
+
+<h2>Once live, these numbers come from the database</h2>
+<div class="card">
+  <p class="tight">Every figure above is a projection until the engine is running. After deployment these views return the real thing:</p>
+<pre>node scripts/run-dispatch.js status     # funnel by cohort + last 7 days of throttle
+
+SELECT * FROM re_v_flow;                -- in-flight now, due today, due tomorrow
+SELECT * FROM re_v_today_by_window;     -- is the day spreading or piling up?
+SELECT * FROM re_v_forward_load;        -- retries already committed to future days
+SELECT * FROM re_v_burndown;            -- % complete + estimated months remaining
+SELECT * FROM re_v_number_health;       -- per-number answer rate vs pool median
+SELECT * FROM re_v_window_performance;  -- does the rotating ladder actually beat same-time?</pre>
+  <p class="tight" style="margin-top:12px"><code>re_v_burndown</code> is the one to watch weekly — it recomputes estimated months remaining from your actual 14-day throughput, so it corrects the 6.2-month projection with reality rather than assumption.</p>
+</div>
+
+<div class="foot">
+  Figures verified against the live Follow Up Boss account, 6 August 2026 · Plan v5 · engine 31/31 tests passing.<br>
+  Projections below "people reached" are modelled, not measured. Not legal advice.
+</div>
+
+</div>
+</body>
+</html>
