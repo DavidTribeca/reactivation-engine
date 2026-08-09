@@ -1,25 +1,32 @@
 /**
- * Cron entry point. Wire this into the existing isa-call-list scheduler, or run
- * it as a Railway cron service.
+ * Operator command line. The server runs all of these on its own schedule —
+ * this is for running one by hand, and for the emergency stop.
  *
  *   node scripts/run-dispatch.js dispatch     # select + dial
  *   node scripts/run-dispatch.js dispatch --dry-run
+ *   node scripts/run-dispatch.js reconcile    # mark reached from the SimpleTalk ingest
+ *   node scripts/run-dispatch.js reconcile --dry-run
  *   node scripts/run-dispatch.js reap         # rescue stuck in_flight rows
  *   node scripts/run-dispatch.js rollup       # nightly metrics for the throttle
  *   node scripts/run-dispatch.js status       # print the funnel
  *   node scripts/run-dispatch.js stop "reason"  # EMERGENCY STOP — halt all dialing
  *   node scripts/run-dispatch.js resume         # resume dialing
  *
- * Suggested schedule (America/Los_Angeles), matching the ladder windows:
- *   0 10 * * 1-6   dispatch     # mid-morning
- *   0 16 * * 1-6   dispatch     # late afternoon
- *   0 18 * * 1-5   dispatch     # evening (weekdays only)
+ * The live schedule is NOT defined here — src/reactivation/schedule.js owns the
+ * dispatch times and src/server.js runs them, so the times below cannot drift
+ * out of date. Shown for reference only (America/Los_Angeles):
+ *   0 10 * * 1-6   dispatch     # mid-morning   (Saturday's only window)
+ *   0 16 * * 1-5   dispatch     # late afternoon
+ *   0 18 * * 1-5   dispatch     # evening
  *   0 21 * * *     reap
  *   30 21 * * *    rollup
  */
 
-import pg from 'pg';
-import { runDispatch, reapStaleInFlight, nightlyRollup } from '../src/reactivation/dispatcher.js';
+import { makePool } from '../src/reactivation/db.js';
+import { runDispatch, reapStaleInFlight, nightlyRollup, recordOutcome }
+  from '../src/reactivation/dispatcher.js';
+import { measureRolloverPct } from '../src/reactivation/adapters/isa-list.js';
+import { reconcileOutcomes } from '../src/reactivation/reconcile.js';
 
 const cmd = process.argv[2] || 'status';
 const dryRun = process.argv.includes('--dry-run');
@@ -38,11 +45,12 @@ async function status(db) {
   }
 
   const { rows: rel } = await db.query(
-    `SELECT * FROM re_daily_release ORDER BY release_date DESC LIMIT 7`);
+    `SELECT *, release_date::text AS day FROM re_daily_release
+      ORDER BY release_date DESC LIMIT 7`);
   console.log('\n  date        target  pushed  state   reason');
   console.log('  ' + '-'.repeat(76));
   for (const r of rel) {
-    console.log(`  ${r.release_date.toISOString().slice(0, 10)}  ` +
+    console.log(`  ${r.day}  ` +
       `${String(r.target_dials).padStart(6)}  ${String(r.actual_pushed).padStart(6)}  ` +
       `${String(r.throttle_state).padEnd(7)} ${(r.throttle_reason || '').slice(0, 44)}`);
   }
@@ -51,7 +59,7 @@ async function status(db) {
 
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set');
-  const db = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 4 });
+  const db = makePool({ max: 4 });
 
   try {
     switch (cmd) {
@@ -60,13 +68,21 @@ async function main() {
         console.log(JSON.stringify(out));
         break;
       }
+      case 'reconcile': {
+        const r = await reconcileOutcomes(db, recordOutcome, { dryRun });
+        console.log(JSON.stringify(r, null, 2));
+        break;
+      }
       case 'reap':
         await reapStaleInFlight(db);
         break;
-      case 'rollup':
-        // TODO wire rolloverPct from the existing "[scheduler] rolled N uncalled" counter.
-        await nightlyRollup(db, { rolloverPct: null });
+      case 'rollup': {
+        const roll = await measureRolloverPct(db);
+        console.log(`[rollup] rollover: ` +
+          `${roll.pct === null ? 'unavailable' : (roll.pct * 100).toFixed(1) + '%'} — ${roll.reason}`);
+        await nightlyRollup(db, { rolloverPct: roll.pct });
         break;
+      }
       case 'status':
         await status(db);
         break;

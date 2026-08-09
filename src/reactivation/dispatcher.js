@@ -15,6 +15,7 @@
  */
 
 import { nextAttempt, isWithinDialWindow, currentWindowLabel, MAX_ATTEMPTS_PER_7_DAYS } from './ladder.js';
+import { programDate } from './db.js';
 import { evaluate, nextTarget, RAMP } from './throttle.js';
 import * as ghl from './adapters/ghl.js';
 import * as fub from './adapters/fub.js';
@@ -58,6 +59,28 @@ const MAX_IN_FLIGHT = Number(process.env.RE_MAX_IN_FLIGHT || 0);
 
 /** Hard cap on any single dispatcher run, regardless of other headroom. */
 const MAX_PER_RUN = Number(process.env.RE_MAX_PER_RUN || 400);
+
+/**
+ * WAVE 0 LAUNCH GUARDRAILS.
+ *
+ * The launch plan says the first live day is 100 dials, ONE cohort, mid-morning
+ * ONLY — a deliberately small blast radius, because integration bugs surface on
+ * the first real batch and they should surface against 100 records rather than
+ * 750. Until now that constraint lived in a checklist as prose, with nothing in
+ * the code enforcing it. A checklist is not a guardrail; the first live dispatch
+ * would have selected from all 23,563 people across every cohort and window.
+ *
+ * Both default to empty, meaning no restriction. Set them for launch, then
+ * clear them to open the program up — a variable change in Railway, not a
+ * deploy, and reversible in seconds.
+ *
+ *   RE_ONLY_COHORTS=hot_engaged
+ *   RE_ONLY_WINDOWS=mid_morning
+ */
+const ONLY_COHORTS = (process.env.RE_ONLY_COHORTS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+const ONLY_WINDOWS = (process.env.RE_ONLY_WINDOWS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
 
 // ---------------------------------------------------------------------------
 
@@ -187,9 +210,23 @@ async function trailingAnswerRate(db, days) {
 
 /**
  * Select and dial. Returns a summary.
+ *
+ * `now` exists so the time-of-day gates can be driven by an injected clock
+ * instead of the wall clock. Nothing in production passes it — the default is
+ * the real time — but the integration suite must be able to run at 3am and
+ * still exercise the dial path, and a clock read from `new Date()` three
+ * separate times inside one run can also straddle a window boundary. One
+ * instant, read once, for the whole run.
  */
-export async function runDispatch(db, { dryRun = false, skipFreshnessCheck = false } = {}) {
-  const today = new Date().toISOString().slice(0, 10);
+export async function runDispatch(
+  db,
+  { dryRun = false, skipFreshnessCheck = false, now = new Date() } = {},
+) {
+  // The Pacific calendar day — same definition Postgres `current_date` gets on
+  // any pool from makePool(). See src/reactivation/db.js for why this is not
+  // the UTC date: under UTC days the boundary lands at 17:00 Pacific, which
+  // splits every evening dispatch onto the next day's ledger row.
+  const today = programDate(now);
 
   // ---- SAFETY GATE 0: EMERGENCY STOP -------------------------------------
   // One flag halts everything. Checked before any other work so a stop takes
@@ -243,7 +280,25 @@ export async function runDispatch(db, { dryRun = false, skipFreshnessCheck = fal
     return { pushed: 0, skipped: 0, target: ledger.target_dials, pushedToday };
   }
 
-  const windowLabel = currentWindowLabel(new Date(), TZ) || 'mid_morning';
+  // ---- SAFETY GATE 2: ARE WE INSIDE A DIAL WINDOW AT ALL? ----------------
+  // The scheduled runs land at 10:00, 16:00 and 18:00, so this only bites on a
+  // hand-run. It used to fall back to labelling the run 'mid_morning', which
+  // was wrong twice over: it filed attempts under a window they did not happen
+  // in (poisoning re_v_window_performance, the view the whole rotating-ladder
+  // decision rests on), and it let the run select a batch that the per-contact
+  // check below then silently discarded — "selected=2 pushed=0" with no reason
+  // given. Refusing outright, with the reason, is the honest behaviour.
+  const windowLabel = currentWindowLabel(now, TZ);
+  if (windowLabel && ONLY_WINDOWS.length && !ONLY_WINDOWS.includes(windowLabel)) {
+    console.log(`[dispatch] window ${windowLabel} is not in RE_ONLY_WINDOWS ` +
+      `(${ONLY_WINDOWS.join(',')}) — standing down`);
+    return { pushed: 0, skipped: 0, aborted: true, reason: 'window_not_enabled', windowLabel };
+  }
+  if (!windowLabel) {
+    console.error(`[dispatch] ABORT — ${now.toISOString()} is not inside any dial ` +
+      `window (${TZ}). Windows: mid_morning, late_afternoon, evening, saturday_am.`);
+    return { pushed: 0, skipped: 0, aborted: true, reason: 'outside_dial_window' };
+  }
 
   // ---- FLOW CONTROL: how many are allowed in the system right now --------
   // Three independent ceilings, and the run takes the smallest.
@@ -318,20 +373,24 @@ export async function runDispatch(db, { dryRun = false, skipFreshnessCheck = fal
         -- the mid-morning window, which is inside legal hours everywhere in
         -- the continental US regardless of where they actually are.
         AND (c.tz_source <> 'default_unknown' OR $4 = 'mid_morning')
+        -- WAVE 0 COHORT LOCK: empty array means no restriction.
+        AND (cardinality($5::text[]) = 0 OR c.cohort_code = ANY($5::text[]))
       ORDER BY co.wave ASC, c.priority_score DESC, c.next_eligible_at ASC
       LIMIT $3
       FOR UPDATE OF c SKIP LOCKED`,
-    [ALLOWED_CONSENT_TIERS, MAX_ATTEMPTS_PER_7_DAYS, room, windowLabel],
+    [ALLOWED_CONSENT_TIERS, MAX_ATTEMPTS_PER_7_DAYS, room, windowLabel, ONLY_COHORTS],
   );
 
-  console.log(`[dispatch] window=${windowLabel} room=${room} selected=${batch.length}`);
+  console.log(`[dispatch] window=${windowLabel} room=${room} selected=${batch.length}` +
+    (ONLY_COHORTS.length ? ` [cohort lock: ${ONLY_COHORTS.join(',')}]` : '') +
+    (ONLY_WINDOWS.length ? ` [window lock: ${ONLY_WINDOWS.join(',')}]` : ''));
 
   const callerNumbers = await availableCallerNumbers(db, today);
   let pushed = 0, skipped = 0, ci = 0;
 
   for (const contact of batch) {
     // Final safety check — a stale queue row must never cause an out-of-hours dial.
-    if (!isWithinDialWindow(new Date(), contact.timezone || TZ)) {
+    if (!isWithinDialWindow(now, contact.timezone || TZ)) {
       skipped++;
       continue;
     }
@@ -539,8 +598,11 @@ export async function reapStaleInFlight(db) {
  * wire it in from the scheduler that already emits
  * "[scheduler] rolled N uncalled contact(s)".
  */
-export async function nightlyRollup(db, { rolloverPct = null } = {}) {
-  const today = new Date().toISOString().slice(0, 10);
+export async function nightlyRollup(db, { rolloverPct = null, now = new Date() } = {}) {
+  // Same program-day definition the dispatcher used when it wrote the ledger
+  // row this rollup is about to fill in. The rollup runs at 21:30 Pacific,
+  // which under UTC days was already tomorrow.
+  const today = programDate(now);
 
   await db.query(
     `WITH d AS (

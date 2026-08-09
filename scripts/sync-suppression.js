@@ -21,7 +21,7 @@
  * the entire database. See adapters/fub.js for the full story.
  */
 
-import pg from 'pg';
+import { makePool } from '../src/reactivation/db.js';
 import { syncSuppression, assertSuppressionSane, DNC_POND_IDS, DNC_STAGES, ACTIVE_STAGES }
   from '../src/reactivation/adapters/fub.js';
 
@@ -31,7 +31,7 @@ async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set');
   if (!process.env.FUB_API_KEY) throw new Error('FUB_API_KEY is not set');
 
-  const db = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 4 });
+  const db = makePool({ max: 4 });
   const before = Number((await db.query(`SELECT count(*)::int n FROM re_suppression`)).rows[0].n);
 
   console.log(`[sync] mode=${FULL ? 'full' : 'incremental'} ` +

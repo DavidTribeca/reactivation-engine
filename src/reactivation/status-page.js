@@ -20,7 +20,8 @@ export async function renderStatusPage(db) {
     db.query(`SELECT * FROM re_v_cohort_status`).then((r) => r.rows),
     db.query(`SELECT * FROM re_v_burndown`).then((r) => r.rows[0] || {}).catch(() => ({})),
     db.query(`SELECT * FROM re_v_today_by_window`).then((r) => r.rows).catch(() => []),
-    db.query(`SELECT * FROM re_daily_release ORDER BY release_date DESC LIMIT 7`).then((r) => r.rows),
+    db.query(`SELECT *, release_date::text AS day FROM re_daily_release
+                ORDER BY release_date DESC LIMIT 7`).then((r) => r.rows),
     db.query(`SELECT * FROM re_sync_state WHERE key='suppression'`).then((r) => r.rows[0] || {}),
     db.query(`SELECT * FROM re_control WHERE key='dialing_enabled'`).then((r) => r.rows[0] || {}),
   ]);
@@ -47,7 +48,9 @@ export async function renderStatusPage(db) {
   const releaseRows = release.map((r) => {
     const c = r.throttle_state === 'red' ? 'var(--critical)'
       : r.throttle_state === 'yellow' ? 'var(--warning)' : 'var(--good)';
-    return `<tr><td>${new Date(r.release_date).toISOString().slice(0, 10)}</td>
+    // release_date is rendered from ::text, not re-parsed through a JS Date —
+    // a DATE round-tripped through Date() shifts a day in any timezone east of UTC.
+    return `<tr><td>${esc(r.day)}</td>
       <td class="n">${n(r.target_dials)}</td><td class="n">${n(r.actual_pushed)}</td>
       <td><span style="color:${c};font-weight:600">${esc(r.throttle_state)}</span></td>
       <td class="s">${esc((r.throttle_reason || '').slice(0, 90))}</td></tr>`;

@@ -5,15 +5,34 @@
  * workflow here is what actually causes a dial. This replaces the manual
  * "add to the 'send to simpletalk' FUB automation" step.
  *
- * ⚠️ VERIFY BEFORE FIRST RUN
- * I could not reach GHL's docs from this session, so confirm these two
- * endpoint shapes against current LeadConnector API docs. Everything else in
- * the engine is insulated from them — if a path or body differs, this file is
- * the only thing that changes.
+ * ── TOKEN SCOPES — verified against the live location 7 Aug 2026 ───────────
+ *
+ * The Private Integration token currently has READ ONLY:
+ *      contacts.readonly · locations/customFields.readonly
+ *      conversations.readonly · calendars.readonly
+ *
+ * It is MISSING everything this adapter needs to write:
+ *      contacts.write          ← upsertContact() cannot work without it
+ *      workflows.readonly      ← to list/confirm the SimpleTalk workflow
+ *      workflows.write         ← enrolInSimpleTalk() / removeFromSimpleTalk()
+ *
+ * Add those in GHL → Settings → Private Integrations → edit the token.
+ * Until then the dispatcher will fail every push with HTTP 401
+ * "The token is not authorized for this scope."
+ *
+ * ⚠️ STILL UNVERIFIED: the two endpoint shapes below. They could not be
+ * exercised because a successful write would enrol a real person in the
+ * SimpleTalk workflow and place a real phone call. Verify against one
+ * deliberately-created test contact, never a live record.
  *   1. POST /contacts/upsert
  *   2. POST /contacts/{contactId}/workflow/{workflowId}
- * Run `npm run reactivate:selftest` (see scripts/) against one test contact
- * before enabling the cron.
+ *
+ * Also note: GHL sits behind Cloudflare, which rejects requests with no
+ * User-Agent (error 1010) — a bare Python/urllib client hits this immediately.
+ * An earlier version of this comment said "Node's fetch sets one", which was an
+ * assumption, not something anyone checked, and it is the kind of assumption
+ * that shows up as an unexplained 403 on the first live push. headers() now
+ * sets one explicitly, so it does not matter what the runtime does by default.
  */
 
 const BASE = 'https://services.leadconnectorhq.com';
@@ -24,6 +43,7 @@ function headers() {
     'Version': process.env.GHL_API_VERSION || '2021-07-28',
     'Content-Type': 'application/json',
     'Accept': 'application/json',
+    'User-Agent': process.env.RE_USER_AGENT || 'tribeca-reactivation-engine/1.0',
   };
 }
 
@@ -68,10 +88,14 @@ export async function upsertContact(contact) {
     timezone:   contact.timezone,
     source:     'reactivation-engine',
     tags:       [`wave-${contact.wave}`, `cohort-${contact.cohort_code}`, 'reactivation'],
+    // Custom field keys VERIFIED against the live location 7 Aug 2026 via
+    // GET /locations/{id}/customFields. An earlier version guessed
+    // 'fub_person_id'; the real key is 'contact.follow_up_boss_record_id',
+    // which the existing FUB<->GHL sync already populates — so writing it
+    // keeps this engine consistent with the sync rather than competing with it.
     customFields: [
-      { key: 'fub_person_id',  field_value: String(contact.fub_person_id ?? '') },
-      { key: 're_cohort',      field_value: contact.cohort_code },
-      { key: 're_attempt',     field_value: String(contact.attempt_count + 1) },
+      { key: 'contact.follow_up_boss_record_id',
+        field_value: String(contact.fub_person_id ?? '') },
     ],
   };
 

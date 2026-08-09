@@ -18,8 +18,14 @@ CREATE TABLE IF NOT EXISTS re_control (
   updated_by text
 );
 
+-- Seeded FALSE. A brand-new install must never come up armed: deploying is not
+-- the same decision as choosing to start calling people, and on this program
+-- those two things are days apart. Turning it on is a deliberate act
+-- (`run-dispatch.js resume`), which also records who did it and when.
+-- ON CONFLICT DO NOTHING, so re-running never disturbs a live setting.
 INSERT INTO re_control (key, value, note, updated_by)
-VALUES ('dialing_enabled', 'true', 'master switch — set false to halt all dialing', 'migration')
+VALUES ('dialing_enabled', 'false',
+        'master switch — off until launch; run-dispatch.js resume to enable', 'migration')
 ON CONFLICT (key) DO NOTHING;
 
 CREATE OR REPLACE FUNCTION re_dialing_enabled() RETURNS boolean

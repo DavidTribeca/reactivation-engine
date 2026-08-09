@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reactivation Engine — Operating Guide</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-0: #f4f3f0; --surface-1: #fcfcfb; --surface-2: #eeede9; --border: #dedcd6;
+    --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #78766f;
+    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+    /* Text-safe variants. The base --warning (#fab219) is 1.79:1 on this
+       surface — fine as a fill, unreadable as text or as a pill border. */
+    --good-ink: #0a7d0a; --warning-ink: #7a5600; --critical-ink: #d03b3b;
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface-0: #111110; --surface-1: #1a1a19; --surface-2: #242422; --border: #383835;
+    --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #94938b;
+    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
+    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
+    /* On the dark surface the base critical falls to 3.62:1, so text lifts. */
+    --good-ink: #0ca30c; --warning-ink: #fab219; --critical-ink: #e86b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background: var(--surface-0); color: var(--text-primary);
+    font: 15px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    -webkit-font-smoothing: antialiased; }
+  .wrap { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
+  header.top { display:flex; justify-content:space-between; align-items:flex-start; gap:16px;
+    flex-wrap:wrap; margin-bottom:6px; }
+  h1 { font-size: 25px; margin: 0 0 4px; letter-spacing: -0.02em; }
+  .sub { color: var(--text-secondary); font-size: 14px; margin: 0; }
+  button.theme { background: var(--surface-1); color: var(--text-secondary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 13px; cursor: pointer;
+    font-size: 13px; font-family: inherit; }
+  button.theme:hover { color: var(--text-primary); }
+  h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.09em;
+    color: var(--text-muted); margin: 40px 0 14px; font-weight: 600; }
+  h3 { font-size: 16px; margin: 22px 0 7px; letter-spacing: -0.01em; }
+  .card { background: var(--surface-1); border: 1px solid var(--border);
+    border-radius: 12px; padding: 20px 22px; }
+  .card + .card { margin-top: 14px; }
+  p { color: var(--text-secondary); margin: 0 0 12px; }
+  p:last-child { margin-bottom: 0; }
+  strong { color: var(--text-primary); }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th { text-align:left; font-weight:600; color: var(--text-muted); font-size: 11.5px;
+    text-transform: uppercase; letter-spacing: 0.06em; padding: 0 10px 9px 0;
+    border-bottom: 1px solid var(--border); }
+  td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--border);
+    vertical-align: top; color: var(--text-secondary); }
+  td strong { color: var(--text-primary); }
+  tr:last-child td { border-bottom: none; }
+  code { background: var(--surface-2); padding: 1.5px 6px; border-radius: 4px;
+    font: 12.5px ui-monospace,"SF Mono",Menlo,Consolas,monospace; color: var(--text-primary); }
+  pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
+    padding: 13px 15px; overflow-x: auto; color: var(--text-primary);
+    font: 12.5px/1.65 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
+  .callout { border-left: 3px solid var(--series-1); padding: 3px 0 3px 15px; margin: 16px 0; }
+  .callout.warn { border-left-color: var(--warning-ink); }
+  .callout.stop { border-left-color: var(--critical-ink); }
+  .pill { display:inline-flex; align-items:center; font-size: 11.5px; font-weight: 600;
+    padding: 3px 9px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
+  .p-good { color: var(--good-ink); border-color: var(--good-ink); }
+  .p-warn { color: var(--warning-ink); border-color: var(--warning-ink); }
+  .p-crit { color: var(--critical-ink); border-color: var(--critical-ink); }
+  .step { display:grid; grid-template-columns: 34px 1fr; gap: 14px; margin-bottom: 20px; }
+  .step:last-child { margin-bottom: 0; }
+  .step .num { width: 30px; height: 30px; border-radius: 999px; background: var(--surface-2);
+    border: 1px solid var(--border); display:flex; align-items:center; justify-content:center;
+    font-size: 13px; font-weight: 650; color: var(--text-primary); }
+  .step h3 { margin: 4px 0 5px; font-size: 15px; }
+  .step p { font-size: 13.5px; margin: 0 0 6px; }
+  .foot { margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--border);
+    font-size: 12.5px; color: var(--text-muted); }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header class="top">
+  <div>
+    <h1>Reactivation Engine — Operating Guide</h1>
+    <p class="sub">Tribeca NW · where it lives, how to start it, how to watch it</p>
+  </div>
+  <button class="theme" onclick="var r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'">Toggle theme</button>
+</header>
+
+<h2>Where it lives</h2>
+<div class="card">
+  <p>Four places, and only one of them is new.</p>
+  <table style="margin-top:14px">
+    <thead><tr><th style="width:150px">Piece</th><th>Where</th><th style="width:88px">Exists?</th></tr></thead>
+    <tbody>
+      <tr>
+        <td><strong>The code</strong></td>
+        <td><code>github.com/DavidTribeca/reactivation-engine</code> — the source of truth. Nothing runs from here; it's the copy everything else is built from.</td>
+        <td><span class="pill p-good">yes</span></td>
+      </tr>
+      <tr>
+        <td><strong>The running program</strong></td>
+        <td>A Railway service in your <em>compassionate-contentment</em> project, built from that repo. One always-on process that wakes itself on a schedule — no separate cron to set up, nothing on your laptop, nothing you have to remember to run.</td>
+        <td><span class="pill p-warn">not yet</span></td>
+      </tr>
+      <tr>
+        <td><strong>The memory</strong></td>
+        <td>Your existing Railway Postgres. New tables, all named <code>re_</code>something, sitting alongside the ISA queue that's already there. Who's due, who's mid-ladder, every attempt, every outcome.</td>
+        <td><span class="pill p-warn">migrations not applied</span></td>
+      </tr>
+      <tr>
+        <td><strong>The dashboard</strong></td>
+        <td>A web page the service itself serves, at its Railway address. Appears the moment the service deploys.</td>
+        <td><span class="pill p-warn">not yet</span></td>
+      </tr>
+    </tbody>
+  </table>
+  <div class="callout">
+    <p style="font-size:13.5px"><strong>Nothing gets installed into Follow Up Boss or GoHighLevel.</strong> The engine reaches out to them over the internet, the same way you do when you log in. If you switched the engine off tomorrow, both systems would carry on exactly as they are now.</p>
+  </div>
+  <p style="font-size:13.5px"><strong>Why its own Railway service rather than folding into <code>isa-call-list</code>:</strong> that service works today and keeps your ISAs supplied. A bad deploy on the new code should never be able to take it down. They share the same database, so there's still one source of truth.</p>
+</div>
+
+<h2>Where the cycle begins</h2>
+<div class="card">
+  <p>Two things are still outstanding before day one: the three GoHighLevel permissions, and the workflow address. Without the second one the engine has nowhere to drop people, so it cannot dial at all.</p>
+  <p>Once those land, the first fortnight is deliberately slow. The point is that when something is wrong, it's wrong in front of 100 records rather than 750.</p>
+
+  <div style="margin-top:22px">
+    <div class="step">
+      <div class="num">1</div>
+      <div>
+        <h3>Load everyone in. No dialing.</h3>
+        <p>Migrations applied, 23,563 people imported and sorted into waves, suppression list pulled from your do-not-contact pond.</p>
+        <p><strong>Before moving on:</strong> the cohort counts look like the numbers you recognise, and suppression lands near 2,100.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">2</div>
+      <div>
+        <h3>Dry run — see exactly who it would call.</h3>
+        <p>It prints the list, in order, and dials nobody.</p>
+        <p><strong>Before moving on:</strong> you personally recognise the names at the top and agree they're the right ones to start with.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">3</div>
+      <div>
+        <h3>Break it on purpose.</h3>
+        <p>We deliberately let the suppression list go stale and confirm the engine refuses to dial anyone.</p>
+        <p><strong>Before moving on:</strong> it actually refused. This is the safety mechanism that matters most, and an untested safety mechanism isn't one.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">4</div>
+      <div>
+        <h3>First real calls — 100 a day, one group, mornings only.</h3>
+        <p>Your best cohort, mid-morning window, nothing else.</p>
+        <p><strong>Before moving on:</strong> nobody was called outside legal hours, and anyone who opted out landed on the suppression list within the hour.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">5</div>
+      <div>
+        <h3>Two weeks of calibration.</h3>
+        <p>Still 100 a day. This is where guesses get replaced by your actual numbers — how many answer, how many are the right person, how many qualify, how many book.</p>
+        <p><strong>Before moving on:</strong> five consecutive green days.</p>
+      </div>
+    </div>
+    <div class="step">
+      <div class="num">6</div>
+      <div>
+        <h3>The ramp starts.</h3>
+        <p>100 → 125 → 156 → 195, a 25% step per green day, up to 750. Around eight weeks to full speed, roughly six months to work the whole database.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<h2>How you watch it — three rhythms</h2>
+
+<div class="card">
+  <h3 style="margin-top:0">Every day, ten seconds — the status page</h3>
+  <p>Bookmark the Railway address. It refreshes itself every minute, so leaving it in a tab is fine.</p>
+  <p>One word at the top tells you everything: <strong style="color:var(--good-ink)">RUNNING</strong>, <strong style="color:var(--warning-ink)">THROTTLED</strong> (it cut volume on its own — usually fine, check the reason), <strong style="color:var(--critical-ink)">BLOCKED</strong> (it stopped itself for safety), or <strong style="color:var(--critical-ink)">STOPPED</strong> (someone hit the emergency stop).</p>
+  <p>Below that: how many are in flight right now, how many went out today against target, how many are due, progress by cohort, and the last seven days of throttle decisions with the reason for each.</p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">Every Monday, ten minutes — the throttle review</h3>
+  <p>The only recurring thing this program asks of you. Look at the last seven days on the status page and ask one question: is it green?</p>
+  <table style="margin-top:12px">
+    <thead><tr><th style="width:110px">What you see</th><th>What it means</th><th>What you do</th></tr></thead>
+    <tbody>
+      <tr><td><span class="pill p-good">green</span></td><td>Answer rate holding, opt-outs low, your ISAs keeping up.</td><td>Nothing. It steps volume up 25% by itself.</td></tr>
+      <tr><td><span class="pill p-warn">yellow</span></td><td>One signal drifting. It holds volume flat rather than climbing.</td><td>Read the reason. Usually resolves on its own.</td></tr>
+      <tr><td><span class="pill p-crit">red</span></td><td>Something is genuinely off. It has already halved volume.</td><td>Read the reason — it names which of the three signals tripped.</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:14px;font-size:13.5px">The decision is already coded. The ritual is what makes it real — three red weeks nobody looked at is how a program quietly ends up at the floor for a month.</p>
+</div>
+
+<div class="card">
+  <h3 style="margin-top:0">Whenever you're curious — the burndown</h3>
+  <p>The one number worth watching monthly: <strong>estimated months remaining</strong>, on the status page. It's recomputed from your <em>actual</em> throughput over the last 14 days, so it corrects the six-month projection with reality instead of assumption. If it starts climbing, something upstream changed.</p>
+</div>
+
+<h2>What the throttle is actually watching</h2>
+<div class="card">
+  <p>Three signals, each with a minimum sample size so a single bad day can't swing it.</p>
+  <table style="margin-top:12px">
+    <thead><tr><th style="width:150px">Signal</th><th>The question it asks</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Rollover</strong></td><td>Of the conversations the bot handed to a human, how many did nobody get to within 48 hours? This is the capacity question, and it's the one that should govern the ramp — there's no point generating more conversations than your people can work.</td></tr>
+      <tr><td><strong>Answer rate</strong></td><td>Are fewer people picking up than they were? A falling answer rate usually means a caller number is getting flagged as spam.</td></tr>
+      <tr><td><strong>Opt-out rate</strong></td><td>Are people asking to be left alone more than they were? This is the one that says the script or the targeting is wrong.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>When it stops by itself</h2>
+<div class="card">
+  <p>Every safety mechanism here fails <em>closed</em> — when in doubt it stops rather than carries on. That's correct, and it means the program can stop safely and <strong>silently</strong>. Three things can halt it:</p>
+  <table style="margin-top:12px">
+    <thead><tr><th style="width:190px">Halt</th><th>Why</th></tr></thead>
+    <tbody>
+      <tr><td><strong>Suppression list is stale</strong></td><td>The do-not-contact sync hasn't succeeded recently, so the engine's picture of who asked not to be called is out of date. It would rather dial nobody than dial one of them.</td></tr>
+      <tr><td><strong>Too many in flight</strong></td><td>Too many people are waiting on an outcome. Usually means SimpleTalk slowed down. It pauses intake and resumes on its own once things drain — this one needs nothing from you.</td></tr>
+      <tr><td><strong>Emergency stop is on</strong></td><td>Someone ran the stop command. The page shows the reason and who did it.</td></tr>
+    </tbody>
+  </table>
+  <div class="callout warn">
+    <p style="font-size:13.5px">This is exactly why the <strong>Slack alert</strong> matters more than it sounds. A health check runs three times a day and posts when a human is genuinely needed — stale suppression, no dials on a working day, push failures climbing, outcomes not coming back, three red days running, caller numbers getting flagged, opt-outs above 2%. Without it, a silent halt looks identical to a quiet day.</p>
+  </div>
+</div>
+
+<h2>The stop button</h2>
+<div class="card">
+  <p>If you ever need every call to stop immediately — a complaint, a lawyer's phone call, a script that's saying the wrong thing:</p>
+<pre>node scripts/run-dispatch.js stop "reason goes here"</pre>
+  <p>It takes effect on the very next run. No deploy, no code change, no waiting on me. The reason and your name are recorded so whoever finds it stopped knows why. Resume with <code>resume</code>.</p>
+  <div class="callout stop">
+    <p style="font-size:13.5px">Belt and braces: the <code>stop ai call</code> tag in Follow Up Boss still works exactly as it does today, for pulling one individual person out. The stop command is for stopping <em>everyone</em> at once.</p>
+  </div>
+</div>
+
+<h2>What runs, and when</h2>
+<div class="card">
+  <p>All of this happens inside the one Railway service. Times are Pacific.</p>
+  <table style="margin-top:12px">
+    <thead><tr><th style="width:130px">When</th><th>What</th></tr></thead>
+    <tbody>
+      <tr><td>every 15 min</td><td>Pull the do-not-contact pond. If this stops succeeding, dialing halts.</td></tr>
+      <tr><td>10:00 Mon–Sat</td><td>Dial — mid-morning window. Saturday's only window.</td></tr>
+      <tr><td>16:00 Mon–Fri</td><td>Dial — late afternoon.</td></tr>
+      <tr><td>18:00 Mon–Fri</td><td>Dial — evening. Hard stop at 8pm, never Sunday.</td></tr>
+      <tr><td>21:00 daily</td><td>Rescue anyone stuck waiting on an outcome.</td></tr>
+      <tr><td>21:30 daily</td><td>Work out tomorrow's number from today's results.</td></tr>
+      <tr><td>03:15 daily</td><td>Full reconciliation of the suppression list.</td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:14px;font-size:13.5px">Seven scheduled jobs and <strong>no daily human step</strong>. Once it's running, the program selects, dials, retries, suppresses, tags, throttles and advances waves on its own. Your Monday ten minutes is the whole operating cost.</p>
+</div>
+
+<div class="foot">
+  Companion to the plan and the tracker in your Claude project. Written 8 August 2026, before deployment —
+  the status page replaces most of this with live numbers the day the service goes up.
+</div>
+
+</div>
+</body>
+</html>

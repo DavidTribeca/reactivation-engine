@@ -25,18 +25,23 @@
 
 import express from 'express';
 import cron from 'node-cron';
-import pg from 'pg';
+import { makePool } from './reactivation/db.js';
 
-import { runDispatch, reapStaleInFlight, nightlyRollup } from './reactivation/dispatcher.js';
+import { runDispatch, reapStaleInFlight, nightlyRollup, recordOutcome }
+  from './reactivation/dispatcher.js';
 import { syncSuppression, assertSuppressionSane } from './reactivation/adapters/fub.js';
+import { measureRolloverPct } from './reactivation/adapters/isa-list.js';
 import { ghlWebhookRouter } from './reactivation/webhook.js';
+import { DISPATCH_SLOTS, cronExpr } from './reactivation/schedule.js';
 import { renderStatusPage } from './reactivation/status-page.js';
+import { runMigrations } from './reactivation/migrate.js';
+import { reconcileOutcomes } from './reactivation/reconcile.js';
 
 const TZ = process.env.TZ_NAME || 'America/Los_Angeles';
 const PORT = Number(process.env.PORT || 3000);
 const ENABLE_CRON = process.env.RE_ENABLE_CRON !== 'false';
 
-const db = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 8 });
+const db = makePool({ max: 8 });
 
 // ---------------------------------------------------------------------------
 // Cron. Times are America/Los_Angeles and line up with the ladder's windows.
@@ -53,11 +58,22 @@ const JOBS = [
     assertSuppressionSane(r);
     await stampSync(true, `full: +${r.added}`);
   }],
-  ['0 10 * * 1-6',  'dispatch-morning',   () => runDispatch(db)],
-  ['0 16 * * 1-6',  'dispatch-afternoon', () => runDispatch(db)],
-  ['0 18 * * 1-5',  'dispatch-evening',   () => runDispatch(db)],
+  // Dispatch times come from DISPATCH_SLOTS so the schedule and the dial
+  // windows cannot drift apart — see src/reactivation/schedule.js.
+  ...DISPATCH_SLOTS.map((s) => [cronExpr(s), s.name, () => runDispatch(db)]),
+  // Runs BEFORE the reaper, deliberately. The reaper turns silence into a
+  // no-answer and puts the contact back on the ladder for another call, so
+  // anything the SimpleTalk ingest can resolve must be resolved first —
+  // otherwise someone who had a real conversation gets dialled again.
+  ['45 20 * * *',   'reconcile',          () => reconcileOutcomes(db, recordOutcome)],
   ['0 21 * * *',    'reap',               () => reapStaleInFlight(db)],
-  ['30 21 * * *',   'rollup',             () => nightlyRollup(db, { rolloverPct: null })],
+  ['30 21 * * *',   'rollup',             async () => {
+    // Rollover is measured, not passed in. See adapters/isa-list.js — this is
+    // the throttle's capacity signal and it was hardcoded null until now.
+    const roll = await measureRolloverPct(db);
+    console.log(`[rollup] rollover: ${roll.pct === null ? 'unavailable' : (roll.pct * 100).toFixed(1) + '%'} — ${roll.reason}`);
+    return nightlyRollup(db, { rolloverPct: roll.pct });
+  }],
 ];
 
 async function stampSync(ok, detail) {
@@ -136,11 +152,31 @@ app.get('/healthz', async (_req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`[server] listening on ${PORT} (tz ${TZ})`);
-  if (ENABLE_CRON) startCron();
-  else console.log('[cron] DISABLED via RE_ENABLE_CRON=false — HTTP only');
-});
+/**
+ * Boot: schema first, then listen, then schedule.
+ *
+ * The order matters. Cron must not start before the schema exists — the 15-min
+ * suppression sync would fire against missing tables, fail, and stamp the sync
+ * as failed, which is the state that halts dialing. And the process exits
+ * rather than serving on a broken schema: a visible failed deploy in Railway
+ * beats a green one that silently cannot dispatch.
+ */
+async function boot() {
+  try {
+    await runMigrations(db);
+  } catch (err) {
+    console.error(`[server] REFUSING TO START — ${err.message}`);
+    process.exit(1);
+  }
+
+  app.listen(PORT, () => {
+    console.log(`[server] listening on ${PORT} (tz ${TZ})`);
+    if (ENABLE_CRON) startCron();
+    else console.log('[cron] DISABLED via RE_ENABLE_CRON=false — HTTP only');
+  });
+}
+
+boot();
 
 for (const sig of ['SIGTERM', 'SIGINT']) {
   process.on(sig, async () => {

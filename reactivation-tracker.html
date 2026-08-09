@@ -114,19 +114,19 @@
   <div class="card tile"><div class="lab">Target set</div><div class="val">23,563</div><div class="note">of 31,416 in FUB</div></div>
   <div class="card tile"><div class="lab">Projected length</div><div class="val">6.2 mo</div><div class="note">peak 750 dials/day</div></div>
   <div class="card tile"><div class="lab">Phase</div><div class="val" style="color:var(--warning)">Pre-launch</div><div class="note">integration pending</div></div>
-  <div class="card tile"><div class="lab">Engine tests</div><div class="val" style="color:var(--good)">31/31</div><div class="note">against live Postgres</div></div>
+  <div class="card tile"><div class="lab">Engine tests</div><div class="val" style="color:var(--good)">54/54</div><div class="note">against a scratch Postgres</div></div>
 </div>
 
 <h2>Build readiness</h2>
 <div class="card">
   <p class="tight">Logic is complete and tested. Everything outstanding is integration, and all of it is GHL-shaped.</p>
-  <div class="meter"><i style="width:82%"></i></div>
-  <p class="tight" style="margin-top:9px;font-size:13px">12 of 15 components verified · 82%</p>
+  <div class="meter"><i style="width:87%"></i></div>
+  <p class="tight" style="margin-top:9px;font-size:13px">13 of 15 components verified · 87%</p>
   <table style="margin-top:14px">
     <thead><tr><th>Component</th><th>Status</th><th>Evidence</th></tr></thead>
     <tbody>
       <tr><td>Schema — 3 migrations</td><td><span class="pill p-done">✓ verified</span></td><td>Applies clean to PG16, idempotent</td></tr>
-      <tr><td>Queue state machine</td><td><span class="pill p-done">✓ verified</span></td><td>31 integration tests</td></tr>
+      <tr><td>Queue state machine</td><td><span class="pill p-done">✓ verified</span></td><td>54 integration tests</td></tr>
       <tr><td>Attempt ladder, rotating windows</td><td><span class="pill p-done">✓ verified</span></td><td>DST-safe; no Sunday or out-of-hours dials</td></tr>
       <tr><td>Throttle — green/yellow/red</td><td><span class="pill p-done">✓ verified</span></td><td>Trailing 7-day counts, min-sample guards</td></tr>
       <tr><td>Flow control — 3 ceilings</td><td><span class="pill p-done">✓ verified</span></td><td>In-flight ceiling tested holding and releasing</td></tr>
@@ -139,7 +139,8 @@
       <tr><td>Tracking views</td><td><span class="pill p-done">✓ verified</span></td><td>4 views execute</td></tr>
       <tr><td>GHL endpoints (upsert, enrol)</td><td><span class="pill p-block">blocked</span></td><td>Shapes unconfirmed — docs unreachable</td></tr>
       <tr><td>GHL webhook event mapping</td><td><span class="pill p-block">blocked</span></td><td>Event names are educated guesses</td></tr>
-      <tr><td>Rollover feed into throttle</td><td><span class="pill p-wait">waiting</span></td><td>Throttle runs on 2 of 3 signals until wired</td></tr>
+      <tr><td>Rollover feed into throttle</td><td><span class="pill p-done">✓ verified</span></td><td>Measured from the ISA queue, 48h grace period</td></tr>
+      <tr><td>Program day — JS vs Postgres</td><td><span class="pill p-done">✓ verified</span></td><td>Both on the Pacific day; evening dials no longer split across two ledger rows</td></tr>
     </tbody>
   </table>
 </div>
@@ -228,11 +229,10 @@
     <thead><tr><th>Item</th><th>Owner</th><th>Why it blocks</th></tr></thead>
     <tbody>
       <tr><td><strong>GHL workflow ID</strong></td><td>Gabriel</td><td>The dial actuator. Without it the dispatcher has nothing to push into.</td></tr>
-      <tr><td><strong>GHL API token</strong></td><td>Gabriel</td><td>Needed to verify endpoints and to measure the real answer rate.</td></tr>
+      <tr><td><strong>GHL token scopes</strong></td><td>Gabriel</td><td>Token received and valid, but read-only. Needs contacts.write, workflows.readonly, workflows.write.</td></tr>
       <tr><td><strong>8–10 phone numbers</strong></td><td>Gabriel</td><td>Longest lead time of anything here — provisioning, Free Caller Registry, STIR/SHAKEN. Start first.</td></tr>
       <tr><td>Verify GHL endpoint shapes</td><td>Claude</td><td>Two unconfirmed API calls; one test contact settles it.</td></tr>
       <tr><td>Rewire outcome feed</td><td>Claude</td><td>Use the proven SimpleTalk ingest instead of unverified GHL webhooks.</td></tr>
-      <tr><td>Wire rollover into throttle</td><td>Claude</td><td>Throttle's most important signal is currently absent.</td></tr>
       <tr><td>Delete the temporary FUB key</td><td>Gabriel</td><td>Created for the profiling scan; its work is done.</td></tr>
     </tbody>
   </table>
@@ -271,7 +271,7 @@ SELECT * FROM re_v_window_performance;  -- does the rotating ladder actually bea
 </div>
 
 <div class="foot">
-  Figures verified against the live Follow Up Boss account, 6 August 2026 · Plan v5 · engine 31/31 tests passing.<br>
+  Figures verified against the live Follow Up Boss account, 6 August 2026 · Plan v5 · engine 54/54 tests passing.<br>
   Projections below "people reached" are modelled, not measured. Not legal advice.
 </div>
 

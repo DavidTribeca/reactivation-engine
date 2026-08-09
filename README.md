@@ -26,7 +26,7 @@ lives in Postgres, and FUB gets written to for visibility and for the
 ```
 Postgres re_contact          ← cohort · wave · attempt_count · next_eligible_at
         │                      consent_tier · suppression · throttle state
-        │  dispatcher cron (10a / 4p / 6p, Mon–Sat)
+        │  dispatcher cron (10a Mon–Sat · 4p, 6p Mon–Fri)
         ▼
 GHL API  ── upsert contact + enrol in SimpleTalk workflow  ← THE DIAL TRIGGER
         ▼
@@ -48,12 +48,18 @@ re_attempt logged · state advanced · FUB tagged `stop ai call` when reached
 | Path | Role |
 |---|---|
 | `migrations/001_reactivation_engine.sql` | Schema. All tables prefixed `re_` so nothing existing collides. |
+| `src/reactivation/db.js` | Pool factory + `programDate()`. Defines the program day as the Pacific day, on both the JS and the Postgres side. |
+| `src/reactivation/schedule.js` | When the dispatcher runs, as data. The suite checks these slots against the dial windows. |
 | `src/reactivation/ladder.js` | When the next attempt happens. Rotating windows, DST-safe, no Sundays. |
 | `src/reactivation/throttle.js` | How many dials to release. Trailing 7-day counts with minimum-sample guards. |
 | `src/reactivation/dispatcher.js` | The daily engine: select, push, record outcome, advance state. |
 | `src/reactivation/adapters/ghl.js` | Pushes contacts into SimpleTalk. **Verify endpoints before first run.** |
 | `src/reactivation/adapters/fub.js` | Tag writes. Read-merge-write so team tags are never wiped. |
+| `src/reactivation/adapters/isa-list.js` | Measures rollover from the ISA queue — the throttle's capacity signal. |
 | `src/reactivation/webhook.js` | GHL webhook → real-time opt-out suppression. |
+| `src/reactivation/reconcile.js` | Second, independent outcome path off the SimpleTalk ingest. Stops a missed webhook becoming a repeat call. |
+| `src/reactivation/migrate.js` | Applies migrations on boot. Fatal on failure. |
+| `scripts/preflight.js` | "Can this go live, and if not, why not" — one read-only command. |
 | `scripts/import-from-fub.js` | One-time import + cohort/consent tiering. Run `--dry-run` first. |
 | `scripts/run-dispatch.js` | Cron entry point. |
 | `scripts/simulate.js` | Scenario sweep. No DB, no API calls. |
@@ -62,13 +68,22 @@ re_attempt logged · state advanced · FUB tagged `stop ai call` when reached
 
 ## Setup
 
-**1. Run the migration.**
+**1. Migrations run themselves.**
+
+The service applies every file in `migrations/` on boot, records what it
+applied in `re_migration`, and exits rather than serving on a half-applied
+schema. Deploying is migrating; there is no psql step and nothing to remember.
+
+To apply them without starting the server:
 
 ```bash
-psql "$DATABASE_URL" -f migrations/001_reactivation_engine.sql
+npm run reactivate:migrate
 ```
 
-Idempotent — safe to re-run.
+**Dialing is OFF on a fresh install.** `re_dialing_enabled()` returns false
+until someone runs `run-dispatch.js resume`, which records who turned it on and
+when. Deploying and deciding to start calling people are different decisions,
+and on this program they are days apart.
 
 **2. Add environment variables** (alongside the ones you already have):
 
@@ -84,7 +99,15 @@ RE_MAX_PER_RUN=400
 RE_ALERT_WEBHOOK=             # Slack/Discord/Zapier/GHL inbound hook — set this
 RE_ALERT_ON_WARNING=false
 DAILY_CAP=100                 # starting target; the throttle takes over
+
+# WAVE 0 LAUNCH LOCKS — set for the first live day, clear to open up.
+RE_ONLY_COHORTS=hot_engaged    # empty = every cohort
+RE_ONLY_WINDOWS=mid_morning    # empty = every window
 ```
+
+The launch locks are the difference between a plan that says "one cohort,
+mid-morning only" and a system that enforces it. Empty means unrestricted, so
+opening the program up later is a variable change in Railway, not a deploy.
 
 `RE_ALLOWED_CONSENT_TIERS` is open to all tiers per counsel's 6 Aug decision:
 everything is dialable **except** what's in the FUB do-not-contact pond. That
@@ -112,6 +135,18 @@ This prints the real cohort and consent-tier distribution. **That output is what
 replaces the placeholder estimates in the plan document** — the "BY CONSENT
 TIER" block is your actual bot-eligible universe.
 
+**4b. Check you are actually ready.**
+
+```bash
+npm run reactivate:preflight
+```
+
+Read-only, places no calls, safe against a live program. It checks the schema,
+that Postgres and the app agree on what day it is, contacts loaded, suppression
+freshness, the caller pool, the GHL token and workflow id, the reconciler's link
+column, and the alert webhook — and prints a specific fix for anything failing.
+Exits non-zero if anything is a blocker, so it can gate a deploy.
+
 **5. Verify the GHL adapter against one test contact** before enabling cron.
 The two endpoint shapes in `adapters/ghl.js` could not be verified from the
 session that wrote them.
@@ -127,15 +162,16 @@ node scripts/run-dispatch.js dispatch --dry-run
 ```
 */15 *    * * *    node scripts/sync-suppression.js         # suppression — must be fresh or dialing halts
 0    10   * * 1-6  node scripts/run-dispatch.js dispatch    # mid-morning  (45% of daily target)
-0    16   * * 1-6  node scripts/run-dispatch.js dispatch    # late afternoon (to 75%)
+0    16   * * 1-5  node scripts/run-dispatch.js dispatch    # late afternoon (to 75%)
 0    18   * * 1-5  node scripts/run-dispatch.js dispatch    # evening, weekdays (to 100%)
+45   20   * * *    node scripts/run-dispatch.js reconcile   # outcomes from the SimpleTalk ingest
 0    21   * * *    node scripts/run-dispatch.js reap        # rescue stuck in-flight
 30   21   * * *    node scripts/run-dispatch.js rollup      # metrics the throttle reads tomorrow
 15   3    * * *    node scripts/sync-suppression.js --full  # nightly reconciliation
 0    8,13,20 * * * node scripts/health-check.js             # ALERTS — see below
 ```
 
-**Seven cron entries and no daily human step.** Once these are running the program selects, dials, retries, suppresses, tags, throttles, and advances waves on its own.
+**Eight cron entries and no daily human step.** Once these are running the program selects, dials, retries, suppresses, tags, throttles, and advances waves on its own.
 
 The health check is what makes that claim honest. Every safety mechanism here fails *closed* — a stale suppression sync halts dialing, an in-flight ceiling pauses intake, a red throttle halves volume. Correct behaviour, but it means the program can stop safely and **silently**. The health check runs three times a day, decides whether a human is needed, and posts to `RE_ALERT_WEBHOOK` (Slack, Discord, Zapier, or a GHL inbound hook). It also exits non-zero on CRITICAL so Railway's own cron alerting fires independently — two ways to hear about it.
 
@@ -156,16 +192,25 @@ app.use('/webhooks/ghl', ghlWebhookRouter(db));
 
 ---
 
-## Two things you must wire up yourself
+## Rollover — measured, not logged
 
-**Rollover feed.** The throttle's most important signal is the share of
-escalated conversations left uncalled. You already log this
-(`[scheduler] rolled N uncalled contact(s)`). Pass it into `nightlyRollup()`
-as `rolloverPct`, replacing the `null` in `run-dispatch.js`. Until you do, the
-throttle is flying on two of three signals.
+The throttle's most important signal is the share of escalated conversations no
+human gets to. It is now measured directly from the `contacts` table the
+isa-call-list service already writes: escalated more than 48 hours ago and still
+carrying a null `completed_at`. See `adapters/isa-list.js`.
 
-**The escalation filter.** This is the single highest-leverage change in the
-whole program — see below.
+It deliberately does **not** read the `[scheduler] rolled N uncalled contact(s)`
+log lines. Those record a contact being *deferred to the next day*, and the 6
+August query showed 96% of deferred conversations are eventually worked, at a
+median of 6.1 hours. Counting deferrals as losses reads ~20–50% rollover against
+a 15% red line, which would pin volume at the floor permanently.
+
+If the `contacts` table is missing, or there are fewer than 10 escalations past
+the grace period, the measurement returns null and the throttle reports
+"insufficient data" for that signal rather than acting on a wrong one.
+
+**The escalation filter** is the one thing still left to you. It is the single
+highest-leverage change in the whole program — see below.
 
 ---
 

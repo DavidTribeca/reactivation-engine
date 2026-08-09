@@ -29,7 +29,7 @@
  * HTTP 400. So we request full records and page via FUB's own nextLink.
  */
 
-import pg from 'pg';
+import { makePool } from '../src/reactivation/db.js';
 import * as fub from '../src/reactivation/adapters/fub.js';
 import { resolveTimezone } from '../src/reactivation/timezone.js';
 
@@ -114,7 +114,7 @@ function priorityScore(person, ponds) {
 
 async function main() {
   if (!process.env.FUB_API_KEY) throw new Error('FUB_API_KEY is not set');
-  const db = DRY ? null : new pg.Pool({ connectionString: process.env.DATABASE_URL });
+  const db = DRY ? null : makePool();
 
   const seenPhones = new Set();
   const stats = {

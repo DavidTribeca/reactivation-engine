@@ -23,7 +23,7 @@
  *   RE_ALERT_ON_WARNING   "true" to page on warnings as well as criticals.
  */
 
-import pg from 'pg';
+import { makePool, programDate } from '../src/reactivation/db.js';
 
 const WEBHOOK = process.env.RE_ALERT_WEBHOOK || null;
 const ALERT_ON_WARNING = process.env.RE_ALERT_ON_WARNING === 'true';
@@ -46,9 +46,10 @@ function localDow() {
 
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is not set');
-  const db = new pg.Pool({ connectionString: process.env.DATABASE_URL, max: 3 });
+  const db = makePool({ max: 3 });
 
-  const today = new Date().toISOString().slice(0, 10);
+  // Program day, not the UTC day — see src/reactivation/db.js.
+  const today = programDate();
   const hour = localHour();
   const dow = localDow();
   const isDialingDay = dow !== 0;

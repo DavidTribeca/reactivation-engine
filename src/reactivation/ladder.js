@@ -155,10 +155,25 @@ export function isWithinDialWindow(instant, timeZone = 'America/Los_Angeles') {
   return hour >= 8 && hour < 20;   // 8am–8pm local, hard bounds
 }
 
-/** Which window label does this instant fall into (for dispatcher run tagging)? */
+/**
+ * Which window label does this instant fall into, or null if none?
+ *
+ * The dispatcher stamps every attempt with this label and re_v_window_performance
+ * groups by it, so a wrong label here quietly corrupts the one measurement that
+ * says whether rotating the windows is beating SimpleTalk's same-time retry.
+ * Two earlier shortcuts did exactly that: Saturday returned 'saturday_am' at any
+ * hour (4am included), and Sunday returned a weekday label despite Sunday being
+ * a no-dial day. Both now return null, and the dispatcher refuses to run.
+ */
 export function currentWindowLabel(instant, timeZone = 'America/Los_Angeles') {
   const { hour, dow } = localParts(instant, timeZone);
-  if (dow === 6) return 'saturday_am';
+  if (BLOCKED_DOW.has(dow)) return null;
+
+  if (dow === 6) {
+    const w = WINDOWS.saturday_am;
+    return hour >= w.startHour && hour < w.endHour ? 'saturday_am' : null;
+  }
+
   for (const [label, w] of Object.entries(WINDOWS)) {
     if (label === 'saturday_am') continue;
     if (hour >= w.startHour && hour < w.endHour) return label;

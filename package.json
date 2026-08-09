@@ -17,12 +17,16 @@
     "reactivate:health": "node scripts/health-check.js",
     "reactivate:sync": "node scripts/sync-suppression.js",
     "reactivate:sync:full": "node scripts/sync-suppression.js --full",
-    "start": "node src/server.js"
+    "start": "node src/server.js",
+    "reactivate:preflight": "node scripts/preflight.js",
+    "reactivate:reconcile": "node scripts/run-dispatch.js reconcile",
+    "reactivate:reconcile:dry": "node scripts/run-dispatch.js reconcile --dry-run",
+    "reactivate:migrate": "node -e \"import('./src/reactivation/db.js').then(async({makePool})=>{const{runMigrations}=await import('./src/reactivation/migrate.js');const db=makePool();await runMigrations(db);await db.end()})\""
   },
   "dependencies": {
     "express": "^4.22.2",
-    "pg": "^8.22.0",
-    "node-cron": "^3.0.3"
+    "node-cron": "^3.0.3",
+    "pg": "^8.22.0"
   },
   "main": "src/server.js"
 }
