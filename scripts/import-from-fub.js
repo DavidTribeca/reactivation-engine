@@ -124,7 +124,40 @@ async function main() {
   const byCohort = {}, byPond = {}, byStage = {}, byOwner = {}, byTz = {};
   let inPond = 0, noPond = 0;
 
+  // FIELD-PRESENCE GUARD.
+  //
+  // Every filter below reads a field off the record. If the API stops
+  // returning one of them, the filter does not error — it silently matches
+  // nothing, and the run completes with a plausible-looking number. That is
+  // exactly what happened when this asked FUB for a narrowed `fields` list:
+  // 31,446 well-formed records in which nobody was assigned to an agent and
+  // nobody was in a pond, and a target 5,000 people too large that included
+  // other agents' clients and the Do Not Contact pond.
+  //
+  // So check the first page for the shape the filters need, and refuse if it
+  // is not there. A filter that cannot see its field must stop the run, not
+  // quietly pass everyone.
+  let checkedShape = false;
+  const requireShape = (page) => {
+    if (checkedShape) return;
+    checkedShape = true;
+    const anyAssigned = page.some((p) => p.assignedUserId != null || p.assignedTo);
+    const anyPond = page.some((p) => p.assignedPondId != null || (p.pondMembers || []).length);
+    const missing = [];
+    if (!anyAssigned) missing.push('assignedUserId/assignedTo (agent-ownership filter)');
+    if (!anyPond) missing.push('assignedPondId/pondMembers (DNC pond filter)');
+    if (missing.length) {
+      throw new Error(
+        `RECORD SHAPE WRONG: not one of the first ${page.length} people has ` +
+        `${missing.join(' or ')}. On this account that is implausible — Jake alone holds ` +
+        `~25,890 records and ~89% sit in a pond. The API is returning truncated records, ` +
+        `so those filters would match nothing and the import would include people other ` +
+        `agents own and people in the Do Not Contact pond. Refusing to run.`);
+    }
+  };
+
   for await (const page of fub.iteratePeople({ limit: 100 })) {
+    requireShape(page);
     for (const person of page) {
       stats.scanned++;
 

@@ -342,8 +342,24 @@ export function normalizeE164(raw) {
  * same API, two different pagination strategies, one of them wrong.
  */
 export async function* iteratePeople({ limit = 100, extraQuery = '' } = {}) {
-  let path = `/people?limit=${limit}` +
-    `&fields=id,name,tags,phones,emails,stage,source,created,lastActivity${extraQuery}`;
+  // NO `fields` PARAMETER. It used to request
+  //   id,name,tags,phones,emails,stage,source,created,lastActivity
+  // which looks harmless and is not. FUB honours it exactly, so every record
+  // came back WITHOUT assignedUserId, assignedPondId or pondMembers — the
+  // three the import's filters are built on. It did not error. It returned
+  // 31,446 perfectly well-formed records in which nobody was assigned to an
+  // agent and nobody was in a pond.
+  //
+  // The result: "held by a real agent" excluded 0 instead of 3,903, and
+  // "DNC / non-lead pond" excluded 0 instead of ~1,106. The target came out
+  // at 28,490 rather than 23,563, and the extra 5,000 included people other
+  // agents own and people sitting in the Do Not Contact pond.
+  //
+  // syncSuppression() has always requested full records, which is why it found
+  // the ponds correctly. Do the same here. The payload is bigger; a truncated
+  // record that silently disables a compliance filter is not a trade worth
+  // making for bandwidth.
+  let path = `/people?limit=${limit}${extraQuery}`;
 
   while (path) {
     const page = await fubFetch(path);
