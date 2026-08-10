@@ -195,11 +195,33 @@ async function main() {
     process.stdout.write(`\r  scanned ${stats.scanned}  target ${stats.target}`);
   }
 
+  // SHORT-READ GUARD.
+  //
+  // The first real run of this import died at exactly 2,000 records: FUB
+  // disables offset pagination past that point and returns a 400. That failure
+  // was loud, which is the only reason it was caught. The dangerous version of
+  // the same bug is the quiet one — a walk that stops early WITHOUT erroring,
+  // leaving most of the database unimported while every number on screen looks
+  // plausible. Those people would simply never be called, and the burndown
+  // would report the program finished.
+  //
+  // So: ask FUB how many people it thinks it has, and refuse if we saw
+  // materially fewer.
+  const expectedTotal = await fub.countPeople().catch(() => null);
+  if (expectedTotal && stats.scanned < expectedTotal * 0.95) {
+    throw new Error(
+      `SHORT READ: scanned ${stats.scanned} of ${expectedTotal} people in Follow Up Boss ` +
+      `(${Math.round((100 * stats.scanned) / expectedTotal)}%). Pagination stopped early. ` +
+      `Refusing to import a partial database — the missing people would never be called ` +
+      `and nothing downstream would show they were missing.`);
+  }
+
   const line = (k, v) => console.log(`  ${String(k).padEnd(38)} ${String(v).padStart(7)}`);
   console.log('\n\n' + '='.repeat(56));
   console.log(`  FUB IMPORT ${DRY ? '(DRY RUN — nothing written)' : ''}`);
   console.log('='.repeat(56));
   line('scanned', stats.scanned);
+  if (expectedTotal) line('  ...of FUB total', expectedTotal);
   console.log('  ' + '-'.repeat(46));
   line('excluded: held by a real agent', stats.ex_agent);
   line('excluded: bad or duplicate phone', stats.ex_phone);

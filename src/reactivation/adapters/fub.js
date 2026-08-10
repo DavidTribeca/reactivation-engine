@@ -53,6 +53,19 @@ async function fubFetch(path, options = {}, { retries = 3 } = {}) {
   throw lastErr;
 }
 
+/**
+ * How many people FUB thinks the account has.
+ *
+ * Used as the denominator for the import's short-read guard. Cheap: asks for a
+ * single record and reads the collection total out of the metadata.
+ */
+export async function countPeople() {
+  const page = await fubFetch('/people?limit=1');
+  const md = page._metadata || {};
+  const total = md.total ?? md.count ?? null;
+  return typeof total === 'number' ? total : null;
+}
+
 export async function getPerson(personId) {
   return fubFetch(`/people/${personId}?fields=id,name,tags,phones,emails,stage,source`);
 }
@@ -315,17 +328,32 @@ export function normalizeE164(raw) {
  * Paged people fetch, for the initial import and for nightly reconciliation.
  * Yields arrays of people.
  */
+/**
+ * Walk every person in the account, a page at a time.
+ *
+ * Follows FUB's own `_metadata.nextLink` cursor rather than incrementing an
+ * offset. Offset paging works for the first 2,000 records and then FUB returns
+ * a hard 400: "Deep pagination disabled, use 'nextLink' url". On an account
+ * with 31,446 people that means an offset-based walk sees the first 6% and
+ * then dies — which is exactly what the import did on its first real run.
+ *
+ * syncSuppression() has always used nextLink, which is why the suppression
+ * sync scanned all 31,446 while the import stopped at 2,000. Same account,
+ * same API, two different pagination strategies, one of them wrong.
+ */
 export async function* iteratePeople({ limit = 100, extraQuery = '' } = {}) {
-  let offset = 0;
-  for (;;) {
-    const qs = `?limit=${limit}&offset=${offset}` +
-      `&fields=id,name,tags,phones,emails,stage,source,created,lastActivity${extraQuery}`;
-    const page = await fubFetch(`/people${qs}`);
+  let path = `/people?limit=${limit}` +
+    `&fields=id,name,tags,phones,emails,stage,source,created,lastActivity${extraQuery}`;
+
+  while (path) {
+    const page = await fubFetch(path);
     const people = page.people || [];
-    if (people.length === 0) return;
-    yield people;
-    if (people.length < limit) return;
-    offset += limit;
+    if (people.length) yield people;
+
+    // nextLink comes back absolute; fubFetch wants a path.
+    const md = page._metadata || {};
+    const next = md.nextLink || md.next;
+    path = next ? (next.startsWith('http') ? next.replace(BASE, '') : next) : null;
   }
 }
 
