@@ -89,6 +89,44 @@ export async function removeTags(personId, tagsToRemove) {
 }
 
 /**
+ * THE DIAL TRIGGER.
+ *
+ * This is what actually causes a call, and it is far simpler than the route
+ * this engine was originally built around. Gabriel's manual process is: select
+ * people in FUB → Mass Action → Apply Automation → "Send To Simpletalk". That
+ * automation has exactly one step: add the tag `ai call`. The tag is what makes
+ * the phone ring. The automation is only a way to apply it to many people at
+ * once — for one person at a time over the API, the tag alone is the whole job.
+ *
+ * So the actuator is a FUB tag write, not a GHL workflow enrolment. That
+ * removes the two unverified GHL endpoints from the dial path entirely, and
+ * means dialing does not depend on the GHL token's write scopes at all.
+ *
+ * ── WHY IT REMOVES THE TAG FIRST ──────────────────────────────────────────
+ *
+ * addTags() skips the write when the tag is already present, and the trigger
+ * downstream is near-certainly "tag was added" rather than "tag is present".
+ * On attempt 2 the person still carries `ai call` from attempt 1, so a plain
+ * addTags() would write nothing, fire nothing, and report success. Every
+ * retry in the ladder would silently do nothing while the queue advanced as
+ * though the call had been placed.
+ *
+ * Removing then re-adding guarantees a genuine add event every time.
+ *
+ * ⚠️ VERIFY ON THE FIRST TEST CONTACT: confirm that attempt 2 actually dials.
+ * If the downstream trigger turns out to be "has tag" rather than "tag added",
+ * this needs rethinking — and in that case leaving the tag on would cause
+ * repeat calls, so it must be checked before any volume.
+ */
+export async function triggerAiCall(personId, { tag = AI_CALL_TAG } = {}) {
+  await removeTags(personId, [tag]);
+  return addTags(personId, [tag]);
+}
+
+/** The tag that makes SimpleTalk dial. Must match the FUB automation exactly. */
+export const AI_CALL_TAG = process.env.RE_AI_CALL_TAG || 'ai call';
+
+/**
  * The kill switch. Applied the instant someone is reached, books, or opts out.
  * Mirrors the tag you apply by hand today.
  */

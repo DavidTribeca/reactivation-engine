@@ -111,10 +111,17 @@ async function main() {
     const { rows: [n] } = await db.query(
       `SELECT count(*)::int AS active, COALESCE(sum(daily_cap),0)::int AS capacity
          FROM re_caller_number WHERE active`);
-    add(BLOCKER, 'Caller numbers', n.active > 0,
-      `${n.active} active, ${n.capacity} dials/day of capacity`,
-      "INSERT INTO re_caller_number (phone_e164, label, daily_cap) VALUES ('+1206...','seattle-1',110);");
-    if (n.active > 0 && n.active < 8) {
+    // Only a blocker when this engine is the thing choosing the number.
+    // Under fub_tag, SimpleTalk places the call and picks the caller ID, so an
+    // empty pool here says nothing about whether calls can go out.
+    add(ghlIsTheActuator ? BLOCKER : INFO, 'Caller numbers', n.active > 0,
+      ghlIsTheActuator
+        ? `${n.active} active, ${n.capacity} dials/day of capacity`
+        : `${n.active} recorded — not used for dialling under fub_tag; SimpleTalk picks the number`,
+      ghlIsTheActuator
+        ? "INSERT INTO re_caller_number (phone_e164, label, daily_cap) VALUES ('+1206...','seattle-1',110);"
+        : 'Numbers are managed in SimpleTalk. Confirm the pool and per-number daily caps there.');
+    if (ghlIsTheActuator && n.active > 0 && n.active < 8) {
       add(WARN, 'Caller number pool is thin', false,
         `${n.active} numbers — 8 to 10 recommended at full volume`,
         'At 750 dials/day across fewer numbers, carriers flag them. Once flagged, a number is dead.');
@@ -126,15 +133,29 @@ async function main() {
   const workflow = process.env.GHL_SIMPLETALK_WORKFLOW_ID;
   const location = process.env.GHL_LOCATION_ID;
 
-  add(BLOCKER, 'GHL workflow id set', !!workflow,
+  // Which mechanism actually causes a call decides which of these BLOCK.
+  const actuator = process.env.RE_ACTUATOR || 'fub_tag';
+  const ghlIsTheActuator = actuator === 'ghl_workflow';
+  add(INFO, 'Dial mechanism', true,
+    ghlIsTheActuator
+      ? 'ghl_workflow — upsert into GHL and enrol in the workflow'
+      : `fub_tag — write the "${process.env.RE_AI_CALL_TAG || 'ai call'}" tag in Follow Up Boss`,
+    ghlIsTheActuator ? null
+      : 'This is the path that works today: the "Send To Simpletalk" automation\'s only ' +
+        'step is adding that tag. GHL is not on the dial path at all.');
+
+  add(ghlIsTheActuator ? BLOCKER : INFO, 'GHL workflow id set', !!workflow,
     workflow ? `${workflow.slice(0, 8)}…` : 'GHL_SIMPLETALK_WORKFLOW_ID is not set',
-    'Open the dialer workflow in GHL and copy the id from the URL. Without it there is ' +
-    'nowhere to push contacts, so nothing can be dialled.');
-  add(BLOCKER, 'GHL location id set', !!location,
+    ghlIsTheActuator
+      ? 'Open the dialer workflow in GHL and copy the id from the URL. Without it there is ' +
+        'nowhere to push contacts, so nothing can be dialled.'
+      : 'Not required while the actuator is fub_tag — kept for the alternative path.');
+  add(ghlIsTheActuator ? BLOCKER : INFO, 'GHL location id set', !!location,
     location ? `${location.slice(0, 8)}…` : 'GHL_LOCATION_ID is not set', 'Set it in Railway.');
 
   if (!token) {
-    add(BLOCKER, 'GHL token', false, 'GHL_API_TOKEN is not set', 'Set it in Railway.');
+    add(ghlIsTheActuator ? BLOCKER : INFO, 'GHL token', false,
+      'GHL_API_TOKEN is not set', 'Set it in Railway.');
   } else {
     // Live scope check. A read-only token is the exact failure this program
     // has already hit once, and it does not surface until the first push
@@ -171,10 +192,12 @@ async function main() {
       // The write scope cannot be proven without writing, and writing here
       // would enrol a real person and place a real call. Report it as unknown
       // rather than implying it passed.
-      add(WARN, 'GHL write scopes', false,
+      add(ghlIsTheActuator ? WARN : INFO, 'GHL write scopes', false,
         'not provable without a write — the last token checked was read-only',
-        'Confirm contacts.write, workflows.readonly and workflows.write are ticked on the ' +
-        'token. Then verify against ONE deliberately-created test contact, never a live record.');
+        'Confirm contacts.write and workflows.readonly are ticked on the token. There is no ' +
+        'workflows.write scope — enrolling a contact goes through the contacts endpoint, so ' +
+        'contacts.write covers it. Then verify against ONE deliberately-created test contact, ' +
+        'never a live record.');
     } catch (err) {
       add(BLOCKER, 'GHL token is valid', false, `request failed: ${err.message}`,
         'Check the token and network access.');
@@ -184,7 +207,10 @@ async function main() {
   // ---- 8. Follow Up Boss ----------------------------------------------
   add(BLOCKER, 'FUB key set', !!process.env.FUB_API_KEY,
     process.env.FUB_API_KEY ? 'present' : 'FUB_API_KEY is not set',
-    'Needed for the import and for the suppression sync.');
+    ghlIsTheActuator
+      ? 'Needed for the import and for the suppression sync.'
+      : 'Needed for the import, the suppression sync, AND the dial itself — the tag write ' +
+        'is what makes the phone ring.');
 
   // ---- 9. The outcome path --------------------------------------------
   const link = await resolveLink(db);

@@ -11,10 +11,16 @@
  *      contacts.readonly · locations/customFields.readonly
  *      conversations.readonly · calendars.readonly
  *
- * It is MISSING everything this adapter needs to write:
- *      contacts.write          ← upsertContact() cannot work without it
+ * It is MISSING what this adapter needs to write:
+ *      contacts.write          ← upsertContact(), AND enrolInSimpleTalk()
  *      workflows.readonly      ← to list/confirm the SimpleTalk workflow
- *      workflows.write         ← enrolInSimpleTalk() / removeFromSimpleTalk()
+ *
+ * NOTE: there is no `workflows.write` scope, and an earlier version of this
+ * comment wrongly said there was — which sent the account owner hunting for a
+ * checkbox that does not exist. Enrolling a contact in a workflow goes through
+ * the CONTACTS endpoint (POST /contacts/{id}/workflow/{workflowId}), so it is
+ * authorised by contacts.write. workflows.readonly is only for confirming the
+ * workflow id is real. contacts.write + workflows.readonly is the full set.
  *
  * Add those in GHL → Settings → Private Integrations → edit the token.
  * Until then the dispatcher will fail every push with HTTP 401

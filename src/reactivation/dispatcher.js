@@ -77,6 +77,24 @@ const MAX_PER_RUN = Number(process.env.RE_MAX_PER_RUN || 400);
  *   RE_ONLY_COHORTS=hot_engaged
  *   RE_ONLY_WINDOWS=mid_morning
  */
+/**
+ * WHICH MECHANISM ACTUALLY CAUSES A CALL.
+ *
+ *   'fub_tag'       write the `ai call` tag in Follow Up Boss   ← default
+ *   'ghl_workflow'  upsert into GHL and enrol in the workflow
+ *
+ * fub_tag is the default because it is the path that demonstrably works today.
+ * Gabriel's manual process is Mass Action → Apply Automation → "Send To
+ * Simpletalk", and that automation's only step is adding the tag `ai call`.
+ * The tag is the trigger; the automation is just bulk-apply.
+ *
+ * Choosing it removes the two never-verified GHL endpoints from the dial path
+ * and makes dialing independent of the GHL token's write scopes. ghl_workflow
+ * is kept because it may prove more precise once verified — it can target one
+ * specific workflow rather than whatever the tag is currently wired to.
+ */
+const ACTUATOR = process.env.RE_ACTUATOR || 'fub_tag';
+
 const ONLY_COHORTS = (process.env.RE_ONLY_COHORTS || '')
   .split(',').map((s) => s.trim()).filter(Boolean);
 const ONLY_WINDOWS = (process.env.RE_ONLY_WINDOWS || '')
@@ -385,7 +403,16 @@ export async function runDispatch(
     (ONLY_COHORTS.length ? ` [cohort lock: ${ONLY_COHORTS.join(',')}]` : '') +
     (ONLY_WINDOWS.length ? ` [window lock: ${ONLY_WINDOWS.join(',')}]` : ''));
 
-  const callerNumbers = await availableCallerNumbers(db, today);
+  // Only meaningful when WE choose the number. Under the fub_tag actuator the
+  // call is placed downstream — SimpleTalk picks the caller ID, apparently by
+  // area code, judging by the GHL workflows split across 206/253/360/425/564.
+  // Recording a number we picked in round-robin would be inventing data, and
+  // re_v_number_health reads that column to recommend retiring numbers. It
+  // would be recommending retirements based on a fiction. Better to record
+  // nothing and have the view honestly empty.
+  const callerNumbers = ACTUATOR === 'ghl_workflow'
+    ? await availableCallerNumbers(db, today)
+    : [];
   let pushed = 0, skipped = 0, ci = 0;
 
   for (const contact of batch) {
@@ -401,13 +428,23 @@ export async function runDispatch(
 
     if (dryRun) {
       console.log(`[dry-run] would dial ${contact.phone_e164} ` +
-        `wave=${contact.wave} cohort=${contact.cohort_code} attempt=${contact.attempt_count + 1}`);
+        `wave=${contact.wave} cohort=${contact.cohort_code} ` +
+        `attempt=${contact.attempt_count + 1} via=${ACTUATOR}`);
       pushed++;
       continue;
     }
 
     try {
-      const ghlId = await ghl.pushForDial(contact);
+      let ghlId = null;
+
+      if (ACTUATOR === 'fub_tag') {
+        if (!contact.fub_person_id) {
+          throw new Error('no fub_person_id — cannot tag, and the tag is the dial trigger');
+        }
+        await fub.triggerAiCall(contact.fub_person_id);
+      } else {
+        ghlId = await ghl.pushForDial(contact);
+      }
 
       await db.query(
         `INSERT INTO re_attempt
@@ -540,6 +577,7 @@ export async function recordOutcome(db, { contactId, outcome, conversationId = n
       await fub.applyStopAiCall(contact.fub_person_id, outcome)
         .catch((e) => console.warn(`[fub] stop tag failed: ${e.message}`));
     }
+    await clearDialTag(contact);
     return { status: statusMap[outcome] };
   }
 
@@ -555,6 +593,7 @@ export async function recordOutcome(db, { contactId, outcome, conversationId = n
       [contactId, outcome],
     );
     if (contact.ghl_contact_id) await ghl.removeFromSimpleTalk(contact.ghl_contact_id);
+    await clearDialTag(contact);
     return { status: 'exhausted' };
   }
 
@@ -568,8 +607,29 @@ export async function recordOutcome(db, { contactId, outcome, conversationId = n
 
   // Remove from the workflow so the next enrolment re-fires cleanly.
   if (contact.ghl_contact_id) await ghl.removeFromSimpleTalk(contact.ghl_contact_id);
+  await clearDialTag(contact);
 
   return { status: 'eligible', nextAttempt: next.attempt, nextAt: next.runAt, window: next.window };
+}
+
+/**
+ * Take the `ai call` tag back off as soon as any outcome lands.
+ *
+ * Under the fub_tag actuator that tag IS the dial trigger, so leaving it on a
+ * record between attempts means the only thing standing between a person and
+ * another call is whatever the downstream automation happens to do with a tag
+ * that is merely present. Taking it off makes the dispatcher the sole cause of
+ * a call: the tag exists only during the window we actually intend one.
+ *
+ * Deliberately never fatal. Failing to clear a tag must not roll back an
+ * outcome that has already been recorded, or the contact would be re-dialled
+ * on the next run — the exact thing this is here to prevent.
+ */
+async function clearDialTag(contact) {
+  if (ACTUATOR !== 'fub_tag' || !contact.fub_person_id) return;
+  await fub.removeTags(contact.fub_person_id, [fub.AI_CALL_TAG])
+    .catch((e) => console.warn(
+      `[fub] could not clear ${fub.AI_CALL_TAG} on ${contact.fub_person_id}: ${e.message}`));
 }
 
 /**
