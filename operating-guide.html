@@ -3,34 +3,33 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Reactivation Engine — Operating Guide</title>
+<title>Where Everything Is — SimpleTalk Reactivation</title>
 <style>
   :root {
     color-scheme: light;
     --surface-0: #f4f3f0; --surface-1: #fcfcfb; --surface-2: #eeede9; --border: #dedcd6;
     --text-primary: #0b0b0b; --text-secondary: #52514e; --text-muted: #78766f;
-    --series-1: #2a78d6; --series-2: #eb6834; --series-3: #1baf7a;
-    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
-    /* Text-safe variants. The base --warning (#fab219) is 1.79:1 on this
-       surface — fine as a fill, unreadable as text or as a pill border. */
+    --series-1: #2a78d6;
+    /* --series-1 is 4.30:1 on this surface — fine for a border or a bar fill,
+       short of AA for the bold URL text it was being used for. */
+    --link-ink: #2166bd;
     --good-ink: #0a7d0a; --warning-ink: #7a5600; --critical-ink: #d03b3b;
   }
   :root[data-theme="dark"] {
     color-scheme: dark;
     --surface-0: #111110; --surface-1: #1a1a19; --surface-2: #242422; --border: #383835;
     --text-primary: #ffffff; --text-secondary: #c3c2b7; --text-muted: #94938b;
-    --series-1: #3987e5; --series-2: #d95926; --series-3: #199e70;
-    --good: #0ca30c; --warning: #fab219; --critical: #d03b3b;
-    /* On the dark surface the base critical falls to 3.62:1, so text lifts. */
+    --series-1: #3987e5;
+    --link-ink: #3987e5;
     --good-ink: #0ca30c; --warning-ink: #fab219; --critical-ink: #e86b6b;
   }
   * { box-sizing: border-box; }
   body { margin:0; background: var(--surface-0); color: var(--text-primary);
     font: 15px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
     -webkit-font-smoothing: antialiased; }
-  .wrap { max-width: 900px; margin: 0 auto; padding: 32px 24px 80px; }
+  .wrap { max-width: 880px; margin: 0 auto; padding: 32px 24px 80px; }
   header.top { display:flex; justify-content:space-between; align-items:flex-start; gap:16px;
-    flex-wrap:wrap; margin-bottom:6px; }
+    flex-wrap:wrap; margin-bottom:4px; }
   h1 { font-size: 25px; margin: 0 0 4px; letter-spacing: -0.02em; }
   .sub { color: var(--text-secondary); font-size: 14px; margin: 0; }
   button.theme { background: var(--surface-1); color: var(--text-secondary);
@@ -38,43 +37,39 @@
     font-size: 13px; font-family: inherit; }
   button.theme:hover { color: var(--text-primary); }
   h2 { font-size: 12.5px; text-transform: uppercase; letter-spacing: 0.09em;
-    color: var(--text-muted); margin: 40px 0 14px; font-weight: 600; }
-  h3 { font-size: 16px; margin: 22px 0 7px; letter-spacing: -0.01em; }
+    color: var(--text-muted); margin: 38px 0 14px; font-weight: 600; }
   .card { background: var(--surface-1); border: 1px solid var(--border);
-    border-radius: 12px; padding: 20px 22px; }
-  .card + .card { margin-top: 14px; }
-  p { color: var(--text-secondary); margin: 0 0 12px; }
+    border-radius: 12px; padding: 19px 21px; }
+  .card + .card { margin-top: 13px; }
+  p { color: var(--text-secondary); margin: 0 0 11px; }
   p:last-child { margin-bottom: 0; }
   strong { color: var(--text-primary); }
+  .place { display:grid; grid-template-columns: 132px 1fr; gap: 16px; }
+  @media (max-width: 620px) { .place { grid-template-columns: 1fr; gap: 4px; } }
+  .place .what { font-weight: 650; color: var(--text-primary); font-size: 14px; }
+  .place .where { font-size: 13.5px; }
+  .u { color: var(--link-ink); word-break: break-all; font-weight: 600; }
   table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
-  th { text-align:left; font-weight:600; color: var(--text-muted); font-size: 11.5px;
-    text-transform: uppercase; letter-spacing: 0.06em; padding: 0 10px 9px 0;
+  th { text-align:left; font-weight:600; color: var(--text-muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: 0.06em; padding: 0 10px 8px 0;
     border-bottom: 1px solid var(--border); }
-  td { padding: 10px 10px 10px 0; border-bottom: 1px solid var(--border);
+  td { padding: 9px 10px 9px 0; border-bottom: 1px solid var(--border);
     vertical-align: top; color: var(--text-secondary); }
   td strong { color: var(--text-primary); }
+  td.n { text-align: right; font-variant-numeric: tabular-nums; }
   tr:last-child td { border-bottom: none; }
   code { background: var(--surface-2); padding: 1.5px 6px; border-radius: 4px;
     font: 12.5px ui-monospace,"SF Mono",Menlo,Consolas,monospace; color: var(--text-primary); }
   pre { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px;
-    padding: 13px 15px; overflow-x: auto; color: var(--text-primary);
+    padding: 12px 14px; overflow-x: auto; color: var(--text-primary);
     font: 12.5px/1.65 ui-monospace,"SF Mono",Menlo,Consolas,monospace; }
-  .callout { border-left: 3px solid var(--series-1); padding: 3px 0 3px 15px; margin: 16px 0; }
-  .callout.warn { border-left-color: var(--warning-ink); }
-  .callout.stop { border-left-color: var(--critical-ink); }
-  .pill { display:inline-flex; align-items:center; font-size: 11.5px; font-weight: 600;
+  .pill { display:inline-flex; align-items:center; font-size: 11px; font-weight: 700;
     padding: 3px 9px; border-radius: 999px; border: 1px solid; white-space: nowrap; }
-  .p-good { color: var(--good-ink); border-color: var(--good-ink); }
-  .p-warn { color: var(--warning-ink); border-color: var(--warning-ink); }
-  .p-crit { color: var(--critical-ink); border-color: var(--critical-ink); }
-  .step { display:grid; grid-template-columns: 34px 1fr; gap: 14px; margin-bottom: 20px; }
-  .step:last-child { margin-bottom: 0; }
-  .step .num { width: 30px; height: 30px; border-radius: 999px; background: var(--surface-2);
-    border: 1px solid var(--border); display:flex; align-items:center; justify-content:center;
-    font-size: 13px; font-weight: 650; color: var(--text-primary); }
-  .step h3 { margin: 4px 0 5px; font-size: 15px; }
-  .step p { font-size: 13.5px; margin: 0 0 6px; }
-  .foot { margin-top: 46px; padding-top: 18px; border-top: 1px solid var(--border);
+  .p-live { color: var(--good-ink); border-color: var(--good-ink); }
+  .p-off  { color: var(--warning-ink); border-color: var(--warning-ink); }
+  .callout { border-left: 3px solid var(--series-1); padding: 2px 0 2px 15px; margin: 15px 0; }
+  .callout.stop { border-left-color: var(--critical-ink); }
+  .foot { margin-top: 44px; padding-top: 17px; border-top: 1px solid var(--border);
     font-size: 12.5px; color: var(--text-muted); }
 </style>
 </head>
@@ -83,190 +78,146 @@
 
 <header class="top">
   <div>
-    <h1>Reactivation Engine — Operating Guide</h1>
-    <p class="sub">Tribeca NW · where it lives, how to start it, how to watch it</p>
+    <h1>Where everything is</h1>
+    <p class="sub">SimpleTalk reactivation · Tribeca NW · accurate as of 9 August 2026, night</p>
   </div>
   <button class="theme" onclick="var r=document.documentElement;r.dataset.theme=r.dataset.theme==='dark'?'light':'dark'">Toggle theme</button>
 </header>
 
-<h2>Where it lives</h2>
-<div class="card">
-  <p>Four places, and only one of them is new.</p>
-  <table style="margin-top:14px">
-    <thead><tr><th style="width:150px">Piece</th><th>Where</th><th style="width:88px">Exists?</th></tr></thead>
-    <tbody>
-      <tr>
-        <td><strong>The code</strong></td>
-        <td><code>github.com/DavidTribeca/reactivation-engine</code> — the source of truth. Nothing runs from here; it's the copy everything else is built from.</td>
-        <td><span class="pill p-good">yes</span></td>
-      </tr>
-      <tr>
-        <td><strong>The running program</strong></td>
-        <td>A Railway service in your <em>compassionate-contentment</em> project, built from that repo. One always-on process that wakes itself on a schedule — no separate cron to set up, nothing on your laptop, nothing you have to remember to run.</td>
-        <td><span class="pill p-warn">not yet</span></td>
-      </tr>
-      <tr>
-        <td><strong>The memory</strong></td>
-        <td>Your existing Railway Postgres. New tables, all named <code>re_</code>something, sitting alongside the ISA queue that's already there. Who's due, who's mid-ladder, every attempt, every outcome.</td>
-        <td><span class="pill p-warn">migrations not applied</span></td>
-      </tr>
-      <tr>
-        <td><strong>The dashboard</strong></td>
-        <td>A web page the service itself serves, at its Railway address. Appears the moment the service deploys.</td>
-        <td><span class="pill p-warn">not yet</span></td>
-      </tr>
-    </tbody>
-  </table>
-  <div class="callout">
-    <p style="font-size:13.5px"><strong>Nothing gets installed into Follow Up Boss or GoHighLevel.</strong> The engine reaches out to them over the internet, the same way you do when you log in. If you switched the engine off tomorrow, both systems would carry on exactly as they are now.</p>
-  </div>
-  <p style="font-size:13.5px"><strong>Why its own Railway service rather than folding into <code>isa-call-list</code>:</strong> that service works today and keeps your ISAs supplied. A bad deploy on the new code should never be able to take it down. They share the same database, so there's still one source of truth.</p>
-</div>
+<h2>Five places. That's all of it.</h2>
 
-<h2>Where the cycle begins</h2>
 <div class="card">
-  <p>Two things are still outstanding before day one: the three GoHighLevel permissions, and the workflow address. Without the second one the engine has nowhere to drop people, so it cannot dial at all.</p>
-  <p>Once those land, the first fortnight is deliberately slow. The point is that when something is wrong, it's wrong in front of 100 records rather than 750.</p>
-
-  <div style="margin-top:22px">
-    <div class="step">
-      <div class="num">1</div>
-      <div>
-        <h3>Load everyone in. No dialing.</h3>
-        <p>Migrations applied, 23,563 people imported and sorted into waves, suppression list pulled from your do-not-contact pond.</p>
-        <p><strong>Before moving on:</strong> the cohort counts look like the numbers you recognise, and suppression lands near 2,100.</p>
-      </div>
-    </div>
-    <div class="step">
-      <div class="num">2</div>
-      <div>
-        <h3>Dry run — see exactly who it would call.</h3>
-        <p>It prints the list, in order, and dials nobody.</p>
-        <p><strong>Before moving on:</strong> you personally recognise the names at the top and agree they're the right ones to start with.</p>
-      </div>
-    </div>
-    <div class="step">
-      <div class="num">3</div>
-      <div>
-        <h3>Break it on purpose.</h3>
-        <p>We deliberately let the suppression list go stale and confirm the engine refuses to dial anyone.</p>
-        <p><strong>Before moving on:</strong> it actually refused. This is the safety mechanism that matters most, and an untested safety mechanism isn't one.</p>
-      </div>
-    </div>
-    <div class="step">
-      <div class="num">4</div>
-      <div>
-        <h3>First real calls — 100 a day, one group, mornings only.</h3>
-        <p>Your best cohort, mid-morning window, nothing else.</p>
-        <p><strong>Before moving on:</strong> nobody was called outside legal hours, and anyone who opted out landed on the suppression list within the hour.</p>
-      </div>
-    </div>
-    <div class="step">
-      <div class="num">5</div>
-      <div>
-        <h3>Two weeks of calibration.</h3>
-        <p>Still 100 a day. This is where guesses get replaced by your actual numbers — how many answer, how many are the right person, how many qualify, how many book.</p>
-        <p><strong>Before moving on:</strong> five consecutive green days.</p>
-      </div>
-    </div>
-    <div class="step">
-      <div class="num">6</div>
-      <div>
-        <h3>The ramp starts.</h3>
-        <p>100 → 125 → 156 → 195, a 25% step per green day, up to 750. Around eight weeks to full speed, roughly six months to work the whole database.</p>
-      </div>
+  <div class="place">
+    <div class="what">1 · The plan</div>
+    <div class="where">
+      <p>Your <strong>Claude project</strong>, in the sidebar of this conversation. Five documents:</p>
+      <p><code>simpletalk-database-reactivation-plan.md</code> — the full strategy and the reasoning<br>
+      <code>TODO.md</code> — what's outstanding, updated every session<br>
+      <code>operating-guide.html</code> — this page<br>
+      <code>reactivation-tracker.html</code> — progress and blockers<br>
+      <code>launch-checklist.md</code> — the go-live sequence</p>
+      <p>Also in your <strong>desktop artifact gallery</strong>, so you can open them without hunting for this chat.</p>
     </div>
   </div>
 </div>
 
-<h2>How you watch it — three rhythms</h2>
-
 <div class="card">
-  <h3 style="margin-top:0">Every day, ten seconds — the status page</h3>
-  <p>Bookmark the Railway address. It refreshes itself every minute, so leaving it in a tab is fine.</p>
-  <p>One word at the top tells you everything: <strong style="color:var(--good-ink)">RUNNING</strong>, <strong style="color:var(--warning-ink)">THROTTLED</strong> (it cut volume on its own — usually fine, check the reason), <strong style="color:var(--critical-ink)">BLOCKED</strong> (it stopped itself for safety), or <strong style="color:var(--critical-ink)">STOPPED</strong> (someone hit the emergency stop).</p>
-  <p>Below that: how many are in flight right now, how many went out today against target, how many are due, progress by cohort, and the last seven days of throttle decisions with the reason for each.</p>
-</div>
-
-<div class="card">
-  <h3 style="margin-top:0">Every Monday, ten minutes — the throttle review</h3>
-  <p>The only recurring thing this program asks of you. Look at the last seven days on the status page and ask one question: is it green?</p>
-  <table style="margin-top:12px">
-    <thead><tr><th style="width:110px">What you see</th><th>What it means</th><th>What you do</th></tr></thead>
-    <tbody>
-      <tr><td><span class="pill p-good">green</span></td><td>Answer rate holding, opt-outs low, your ISAs keeping up.</td><td>Nothing. It steps volume up 25% by itself.</td></tr>
-      <tr><td><span class="pill p-warn">yellow</span></td><td>One signal drifting. It holds volume flat rather than climbing.</td><td>Read the reason. Usually resolves on its own.</td></tr>
-      <tr><td><span class="pill p-crit">red</span></td><td>Something is genuinely off. It has already halved volume.</td><td>Read the reason — it names which of the three signals tripped.</td></tr>
-    </tbody>
-  </table>
-  <p style="margin-top:14px;font-size:13.5px">The decision is already coded. The ritual is what makes it real — three red weeks nobody looked at is how a program quietly ends up at the floor for a month.</p>
-</div>
-
-<div class="card">
-  <h3 style="margin-top:0">Whenever you're curious — the burndown</h3>
-  <p>The one number worth watching monthly: <strong>estimated months remaining</strong>, on the status page. It's recomputed from your <em>actual</em> throughput over the last 14 days, so it corrects the six-month projection with reality instead of assumption. If it starts climbing, something upstream changed.</p>
-</div>
-
-<h2>What the throttle is actually watching</h2>
-<div class="card">
-  <p>Three signals, each with a minimum sample size so a single bad day can't swing it.</p>
-  <table style="margin-top:12px">
-    <thead><tr><th style="width:150px">Signal</th><th>The question it asks</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Rollover</strong></td><td>Of the conversations the bot handed to a human, how many did nobody get to within 48 hours? This is the capacity question, and it's the one that should govern the ramp — there's no point generating more conversations than your people can work.</td></tr>
-      <tr><td><strong>Answer rate</strong></td><td>Are fewer people picking up than they were? A falling answer rate usually means a caller number is getting flagged as spam.</td></tr>
-      <tr><td><strong>Opt-out rate</strong></td><td>Are people asking to be left alone more than they were? This is the one that says the script or the targeting is wrong.</td></tr>
-    </tbody>
-  </table>
-</div>
-
-<h2>When it stops by itself</h2>
-<div class="card">
-  <p>Every safety mechanism here fails <em>closed</em> — when in doubt it stops rather than carries on. That's correct, and it means the program can stop safely and <strong>silently</strong>. Three things can halt it:</p>
-  <table style="margin-top:12px">
-    <thead><tr><th style="width:190px">Halt</th><th>Why</th></tr></thead>
-    <tbody>
-      <tr><td><strong>Suppression list is stale</strong></td><td>The do-not-contact sync hasn't succeeded recently, so the engine's picture of who asked not to be called is out of date. It would rather dial nobody than dial one of them.</td></tr>
-      <tr><td><strong>Too many in flight</strong></td><td>Too many people are waiting on an outcome. Usually means SimpleTalk slowed down. It pauses intake and resumes on its own once things drain — this one needs nothing from you.</td></tr>
-      <tr><td><strong>Emergency stop is on</strong></td><td>Someone ran the stop command. The page shows the reason and who did it.</td></tr>
-    </tbody>
-  </table>
-  <div class="callout warn">
-    <p style="font-size:13.5px">This is exactly why the <strong>Slack alert</strong> matters more than it sounds. A health check runs three times a day and posts when a human is genuinely needed — stale suppression, no dials on a working day, push failures climbing, outcomes not coming back, three red days running, caller numbers getting flagged, opt-outs above 2%. Without it, a silent halt looks identical to a quiet day.</p>
+  <div class="place">
+    <div class="what">2 · The code</div>
+    <div class="where">
+      <p><span class="u">github.com/DavidTribeca/reactivation-engine</span> &nbsp;<span class="pill p-live">live</span></p>
+      <p>The source of truth. Nothing runs from here — it's the copy Railway builds from. When I send you a zip, you unzip it over your local folder and push, and Railway rebuilds within a minute.</p>
+    </div>
   </div>
 </div>
 
-<h2>The stop button</h2>
 <div class="card">
-  <p>If you ever need every call to stop immediately — a complaint, a lawyer's phone call, a script that's saying the wrong thing:</p>
-<pre>node scripts/run-dispatch.js stop "reason goes here"</pre>
-  <p>It takes effect on the very next run. No deploy, no code change, no waiting on me. The reason and your name are recorded so whoever finds it stopped knows why. Resume with <code>resume</code>.</p>
+  <div class="place">
+    <div class="what">3 · The automation</div>
+    <div class="where">
+      <p><strong>Railway</strong> → project <em>compassionate-contentment</em> → service <strong>reactivation-engine</strong> &nbsp;<span class="pill p-live">running</span></p>
+      <p>This is the thing itself. One always-on process that wakes on its own schedule. Nothing on your laptop, no cron to maintain, nothing to remember.</p>
+      <p>Five tabs on that service: <strong>Deployments</strong> (build history), <strong>Variables</strong> (every setting — 24 of them), <strong>Metrics</strong>, <strong>Console</strong> (a terminal inside it), <strong>Settings</strong>.</p>
+      <p><strong>The scheduler is currently OFF</strong> — <code>RE_ENABLE_CRON=false</code>. It serves the dashboard and does nothing else until you say go.</p>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="place">
+    <div class="what">4 · The data</div>
+    <div class="where">
+      <p><strong>Railway</strong> → same project → <strong>Postgres</strong> &nbsp;<span class="pill p-live">live</span></p>
+      <p>The one you already had. The engine added tables prefixed <code>re_</code> alongside your ISA queue — nothing existing was touched. Every person, every attempt, every outcome, and the throttle's memory live here.</p>
+      <p><strong>22,788 people loaded.</strong> Zero calls made.</p>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="place">
+    <div class="what">5 · The dashboard</div>
+    <div class="where">
+      <p><span class="u">reactivation-engine-production-c1c1.up.railway.app</span> &nbsp;<span class="pill p-live">live now</span></p>
+      <p><strong>Bookmark this one.</strong> It's the only one you need day to day. Refreshes itself every minute. Right now it shows a red STOPPED banner and all 22,788 people waiting.</p>
+    </div>
+  </div>
+</div>
+
+<div class="callout">
+  <p style="font-size:13.5px"><strong>Nothing was installed into Follow Up Boss or GoHighLevel.</strong> The engine reaches out to them over the internet, the way you do when you log in. Switch it off tomorrow and both carry on exactly as they are.</p>
+</div>
+
+<h2>What's loaded right now</h2>
+<div class="card">
+  <table>
+    <thead><tr><th>Wave</th><th>Group</th><th class="n">Waiting</th></tr></thead>
+    <tbody>
+      <tr><td>1</td><td><strong>Leads 0–90 days</strong> — Wave 0 starts here</td><td class="n">344</td></tr>
+      <tr><td>2</td><td>Past clients</td><td class="n">661</td></tr>
+      <tr><td>2</td><td>Leads 91–365 days</td><td class="n">1,194</td></tr>
+      <tr><td>3</td><td>Dormant 1–3 years</td><td class="n">4,273</td></tr>
+      <tr><td>4</td><td>Dormant 3+ years</td><td class="n">16,316</td></tr>
+      <tr><td></td><td><strong>Total</strong></td><td class="n"><strong>22,788</strong></td></tr>
+    </tbody>
+  </table>
+  <p style="margin-top:13px;font-size:13.5px">Do-not-call list: 2,284 numbers across 2,192 people. ISA rollover: 6.7%, well inside the safe band. Slack alerts confirmed working.</p>
+</div>
+
+<h2>How a call actually happens</h2>
+<div class="card">
+  <p>Worth knowing, because it's simpler than it sounds and it's the same path you use by hand today.</p>
+  <p><strong>1.</strong> At 4pm the engine picks who's due.<br>
+  <strong>2.</strong> It writes the tag <code>ai call</code> on each of them in Follow Up Boss — exactly what your "Send To Simpletalk" automation does.<br>
+  <strong>3.</strong> The tag makes SimpleTalk dial.<br>
+  <strong>4.</strong> The outcome comes back two ways: a GoHighLevel webhook, plus a nightly cross-check against your ISA queue so a missed webhook can't cause a repeat call.<br>
+  <strong>5.</strong> Anyone reached gets <code>stop ai call</code> and never hears from it again.</p>
+</div>
+
+<h2>The settings that matter</h2>
+<div class="card">
+  <p>All in Railway → reactivation-engine → <strong>Variables</strong>. Changing one takes effect on the next run, no code change.</p>
+  <table style="margin-top:12px">
+    <thead><tr><th>Setting</th><th>Now</th><th>What it does</th></tr></thead>
+    <tbody>
+      <tr><td><code>RE_ENABLE_CRON</code></td><td><strong>false</strong></td><td>The scheduler. Nothing runs until this is true.</td></tr>
+      <tr><td><code>DAILY_CAP</code></td><td>100</td><td>Starting volume. The throttle takes over from here.</td></tr>
+      <tr><td><code>RE_ONLY_COHORTS</code></td><td>recent_0_90</td><td>Wave 0 lock. Clear it and all waves flow in order.</td></tr>
+      <tr><td><code>RE_ONLY_WINDOWS</code></td><td>late_afternoon</td><td>4–6pm only. Clear it to open mornings and evenings.</td></tr>
+      <tr><td><code>RE_EXCLUDE_PONDS</code></td><td>4,50,55,5,30,45</td><td>Never imported. 30 is AGENT EXIT, 45 is Pending/Closed.</td></tr>
+      <tr><td><code>RE_AI_CALL_TAG</code></td><td>ai call</td><td>The tag that triggers a dial.</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2>The three commands you'd ever type</h2>
+<div class="card">
+  <p>Railway → reactivation-engine → <strong>Console</strong> tab. That's a terminal inside the running service.</p>
+<pre>node scripts/preflight.js            # is everything ready, and if not, why
+node scripts/run-dispatch.js status  # the funnel, by wave
+node scripts/run-dispatch.js stop "reason"   # HALT EVERY CALL</pre>
   <div class="callout stop">
-    <p style="font-size:13.5px">Belt and braces: the <code>stop ai call</code> tag in Follow Up Boss still works exactly as it does today, for pulling one individual person out. The stop command is for stopping <em>everyone</em> at once.</p>
+    <p style="font-size:13.5px"><strong>The stop command takes effect on the very next run.</strong> No deploy, no waiting on me. The reason and your name get recorded. Resume with <code>resume</code>. And the <code>stop ai call</code> tag in Follow Up Boss still pulls one individual person out, exactly as it does today.</p>
   </div>
 </div>
 
-<h2>What runs, and when</h2>
+<h2>Watching it, once it's running</h2>
 <div class="card">
-  <p>All of this happens inside the one Railway service. Times are Pacific.</p>
-  <table style="margin-top:12px">
-    <thead><tr><th style="width:130px">When</th><th>What</th></tr></thead>
-    <tbody>
-      <tr><td>every 15 min</td><td>Pull the do-not-contact pond. If this stops succeeding, dialing halts.</td></tr>
-      <tr><td>10:00 Mon–Sat</td><td>Dial — mid-morning window. Saturday's only window.</td></tr>
-      <tr><td>16:00 Mon–Fri</td><td>Dial — late afternoon.</td></tr>
-      <tr><td>18:00 Mon–Fri</td><td>Dial — evening. Hard stop at 8pm, never Sunday.</td></tr>
-      <tr><td>21:00 daily</td><td>Rescue anyone stuck waiting on an outcome.</td></tr>
-      <tr><td>21:30 daily</td><td>Work out tomorrow's number from today's results.</td></tr>
-      <tr><td>03:15 daily</td><td>Full reconciliation of the suppression list.</td></tr>
-    </tbody>
-  </table>
-  <p style="margin-top:14px;font-size:13.5px">Seven scheduled jobs and <strong>no daily human step</strong>. Once it's running, the program selects, dials, retries, suppresses, tags, throttles and advances waves on its own. Your Monday ten minutes is the whole operating cost.</p>
+  <p><strong>Daily, ten seconds.</strong> The dashboard. One word at the top: RUNNING, THROTTLED, BLOCKED or STOPPED.</p>
+  <p><strong>Weekly, ten minutes.</strong> Look at the last seven days on that page. Green means it steps volume up 25% by itself. Yellow means it's holding. Red means it already halved volume and the reason column says which of the three signals tripped. That ten minutes is the entire operating cost of this thing.</p>
+  <p><strong>Monthly, one number.</strong> Estimated months remaining, recomputed from your actual throughput rather than my projection. If it starts climbing, something upstream changed.</p>
+  <p><strong>Any time something breaks:</strong> Slack, <code>#ai-calling-alerts</code>. Every safety mechanism here fails closed, so the program can stop itself safely and completely silently — that channel is how a silent halt stops looking like a quiet day.</p>
+</div>
+
+<h2>What's left</h2>
+<div class="card">
+  <p><strong>One question for you:</strong> is AGENT EXIT POND (579 people) leads orphaned by departed agents, or the agents themselves? I excluded them until you say. Follow Up Boss → People → filter by Pond.</p>
+  <p><strong>Then say go</strong> and I turn on the scheduler and the master switch. First calls 4pm the next weekday, 100 of your freshest 344 leads.</p>
+  <p><strong>Not blocking:</strong> email counsel about the ~2,900 purchased-list records and the Veteran's United pond; rotate the Postgres password; delete the FUB key <code>temp-profile-delete-me</code>; ask SimpleTalk what the per-number daily cap is, since that's the real ceiling on volume rather than my throttle.</p>
 </div>
 
 <div class="foot">
-  Companion to the plan and the tracker in your Claude project. Written 8 August 2026, before deployment —
-  the status page replaces most of this with live numbers the day the service goes up.
+  Companion to the plan and tracker in your Claude project. The dashboard replaces the numbers on this page with live ones the moment dialing starts.
 </div>
 
 </div>

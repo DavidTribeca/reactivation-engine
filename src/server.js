@@ -135,6 +135,18 @@ app.get('/api/cohorts', async (_req, res) => {
   res.json(rows);
 });
 
+app.get('/api/cycle', async (_req, res) => {
+  const [{ rows: [cycle] }, { rows: [rate] }, { rows: ladder }, { rows: intake }] =
+    await Promise.all([
+      db.query(`SELECT * FROM re_v_cycle`),
+      db.query(`SELECT * FROM re_v_intake_rate`),
+      db.query(`SELECT * FROM re_v_ladder_position`),
+      db.query(`SELECT day::text AS day, new_people, dials, connects
+                  FROM re_v_intake_daily ORDER BY day`),
+    ]);
+  res.json({ cycle, rate, ladder, intake });
+});
+
 app.get('/api/burndown', async (_req, res) => {
   const { rows: [b] } = await db.query(`SELECT * FROM re_v_burndown`);
   res.json(b);
