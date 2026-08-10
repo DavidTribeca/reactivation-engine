@@ -9,7 +9,23 @@
  * Pure functions, no I/O — unit-testable and used by the simulation harness.
  */
 
-/** Window definitions in the CONTACT's local time. */
+/**
+ * Window definitions in the CONTACT's local time.
+ *
+ * WHY THESE HOURS. The most-cited work on call timing (Oldroyd's lead-response
+ * study, ~15,000 leads and ~100,000 call attempts) found contact rates peak at
+ * 4-5pm local, with a second peak at 8-9am, and a pronounced trough from 11am
+ * to 2pm. That study was B2B web leads rather than dormant consumer records,
+ * so treat the diurnal SHAPE as the transferable part and the magnitudes as
+ * indicative — midday is the dead zone, late afternoon is the peak.
+ *
+ * These windows deliberately avoid 12-4pm entirely for that reason, and stop
+ * at 8pm because that is the legal bound, not because 8pm is a good time.
+ *
+ * None of this is your data. re_v_window_performance measures answer rate by
+ * window and by attempt number from the first live day onward, and it should
+ * replace this reasoning as soon as it has a sample worth trusting.
+ */
 export const WINDOWS = {
   mid_morning:     { startHour: 10, endHour: 12 },
   late_afternoon:  { startHour: 16, endHour: 18 },

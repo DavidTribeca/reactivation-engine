@@ -237,6 +237,27 @@ async function main() {
   const onlyCohorts = process.env.RE_ONLY_COHORTS || '';
   const onlyWindows = process.env.RE_ONLY_WINDOWS || '';
   const cap = process.env.DAILY_CAP || '(unset — defaults to 100)';
+  // A launch lock naming a cohort nobody is in means the dispatcher selects
+  // zero people and reports success. hot_engaged shipped as exactly that: a
+  // cohort defined in the schema that the import never assigns. The first
+  // live day would have dialled nobody and looked completely healthy.
+  if (onlyCohorts && contactCount > 0) {
+    const wanted = onlyCohorts.split(',').map((c) => c.trim()).filter(Boolean);
+    const { rows: pop } = await db.query(
+      `SELECT cohort_code, count(*)::int AS n FROM re_contact
+        WHERE cohort_code = ANY($1::text[]) GROUP BY cohort_code`, [wanted]);
+    const counts = new Map(pop.map((r) => [r.cohort_code, r.n]));
+    const empty = wanted.filter((c) => !counts.get(c));
+    add(empty.length ? BLOCKER : INFO, 'Launch cohort is populated', empty.length === 0,
+      empty.length
+        ? `${empty.join(', ')} — nobody is in ${empty.length > 1 ? 'these' : 'this'}`
+        : wanted.map((c) => `${c}=${counts.get(c)}`).join('  '),
+      empty.length
+        ? 'The dispatcher would select nobody and report success. Set RE_ONLY_COHORTS to a ' +
+          'cohort that has people in it, or clear it to allow every cohort.'
+        : null);
+  }
+
   add(INFO, 'Launch guardrails', true,
     `DAILY_CAP=${cap}  RE_ONLY_COHORTS=${onlyCohorts || '(none)'}  ` +
     `RE_ONLY_WINDOWS=${onlyWindows || '(none)'}`,
