@@ -40,7 +40,7 @@
  * renders, the database is reachable and the views are intact — which is itself
  * a useful signal. The only script is a theme toggle and the chart tooltips.
  */
-
+import { funnelSection } from './funnel-section.js';
 const esc = (s) => String(s ?? '').replace(/[&<>"]/g, (c) =>
   ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -490,7 +490,7 @@ ${dialing && !fresh ? `<div class="banner critical"><span>⛔</span><span>
 <div class="c"><table>
 <thead><tr><th>Day</th><th class="n">Target</th><th class="n">Sent</th><th>State</th><th>Reason</th></tr></thead>
 <tbody>${releaseRows}</tbody></table></div>
-
+${await funnelSection(db)}
 <div class="foot">
   Do-not-call list: ${n(dncCount)} numbers · last synced ${esc(sync.last_ok_at || 'never')} ·
   ${n(cycle.left_opted_out)} people opted out since launch<br>
