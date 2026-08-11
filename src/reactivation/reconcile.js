@@ -22,10 +22,12 @@
  * turns up in that table, they were reached, whatever the webhook did or did
  * not say.
  *
- * This only ever marks people as REACHED. It never invents a no-answer, an
- * opt-out or a bad number — absence of evidence is not evidence, and the reaper
- * already handles silence. It is a floor under the outcome feed, not a
- * replacement for it.
+ * Its floor is REACHED. Where the ingest carries its own outcome label it is
+ * also allowed to move UP from there — to an appointment, an opt-out or a bad
+ * number — because an appointment recorded as a plain 'reached' is a booking
+ * that never shows up in your numbers. It still never invents a no-answer or a
+ * voicemail: absence of evidence is not evidence, and the reaper already owns
+ * silence. It is a floor under the outcome feed, not a replacement for it.
  *
  * ── ON THE SCHEMA ─────────────────────────────────────────────────────────
  *
@@ -46,15 +48,60 @@ const FUB_ID_COLUMNS = [
 
 /** Candidate names for the phone number, used when no FUB id column exists. */
 const PHONE_COLUMNS = [
-  'phone_e164', 'phone', 'phone_number', 'primary_phone', 'mobile_phone', 'cell',
+  'phone_e164', 'phone_normalized', 'phone', 'phone_number', 'primary_phone',
+  'mobile_phone', 'cell',
 ];
 
 /** How far back to look. A conversation older than this is already handled. */
 const LOOKBACK_HOURS = Number(process.env.RE_RECONCILE_LOOKBACK_HOURS || 72);
 
+/** Candidate names for the ingest's own outcome label, best guess first. */
+const OUTCOME_COLUMNS = ['bot_call_outcome', 'call_outcome', 'outcome', 'disposition'];
+
+/**
+ * Map the ISA ingest's own outcome label onto our vocabulary.
+ *
+ * The floor is 'reached': if a row carries a bot_call_at then a conversation
+ * happened, and that alone is enough to take the contact off the ladder. We
+ * only ever move UP from there — to an appointment, an opt-out or a bad number
+ * — and never down to a no-answer or voicemail, because this path exists to
+ * stop repeat dials, not to manufacture negative outcomes. Absence of evidence
+ * is still not evidence; the reaper already owns silence.
+ *
+ * ⚠️ These patterns are written against label values nobody has confirmed yet.
+ * Run `npm run reactivate:reconcile:dry` and read the printed breakdown before
+ * letting this write anything.
+ */
+const OUTCOME_PATTERNS = [
+  [/opt.?out|unsubscrib|\bdnc\b|do.?not.?(contact|call)|remove.?me/, 'opted_out'],
+  [/appointment|appt|booked|meeting|consult/,                          'appointment'],
+  [/invalid|disconnect|wrong.?number|bad.?number|not.?in.?service/,    'bad_number'],
+];
+
+export function mapIngestOutcome(raw) {
+  const text = String(raw ?? '').toLowerCase().trim();
+  if (!text) return 'reached';
+  for (const [pattern, outcome] of OUTCOME_PATTERNS) {
+    if (pattern.test(text)) return outcome;
+  }
+  return 'reached';
+}
+
 /**
  * Work out how to join `contacts` to `re_contact`.
  * Returns { ok, by, column, available } — `by` is 'fub_id' or 'phone'.
+ *
+ * ── WHY THIS CHECKS FOR DATA AND NOT JUST FOR A COLUMN ────────────────────
+ *
+ * The first version of this took the first candidate column that EXISTED on
+ * `contacts`. That is not the same question. `fub_person_id` exists on that
+ * table and is NULL on every row the SimpleTalk ingest writes, so the join
+ * resolved to `ct.fub_person_id = rc.fub_person_id`, matched zero rows, and
+ * reported "nothing to reconcile" — indistinguishable from a quiet night. On
+ * 2026-08-10 that swallowed 60 real conversations, two of them appointments,
+ * and left all 60 queued for a second dial. A column existing is not evidence
+ * it is usable; only data is. So each candidate is now probed against the rows
+ * that actually matter (those carrying a bot_call_at) and skipped if empty.
  */
 export async function resolveLink(db) {
   const { rows } = await db.query(
@@ -68,16 +115,46 @@ export async function resolveLink(db) {
   const available = rows.map((r) => r.column_name);
   const has = (c) => available.includes(c);
 
-  for (const c of FUB_ID_COLUMNS) {
-    if (has(c)) return { ok: true, by: 'fub_id', column: c, available };
+  const outcomeColumn = OUTCOME_COLUMNS.find(has) || null;
+
+  /** How many rows with a real conversation actually carry this column? */
+  const populated = async (c) => {
+    const { rows: [r] } = await db.query(
+      `SELECT count(*)::int AS n FROM contacts
+        WHERE ${c} IS NOT NULL AND bot_call_at IS NOT NULL`);
+    return r.n;
+  };
+
+  // An explicit override always wins — the escape hatch for when the probe
+  // below guesses wrong and there is no time to argue with it.
+  const forced = process.env.RE_RECONCILE_LINK_COLUMN;
+  if (forced) {
+    if (!has(forced)) {
+      return { ok: false, reason: `RE_RECONCILE_LINK_COLUMN=${forced} is not a column on contacts`, available };
+    }
+    const by = FUB_ID_COLUMNS.includes(forced) ? 'fub_id' : 'phone';
+    return { ok: true, by, column: forced, outcomeColumn, available, forced: true };
   }
+
+  for (const c of FUB_ID_COLUMNS) {
+    if (!has(c)) continue;
+    const n = await populated(c);
+    if (n > 0) return { ok: true, by: 'fub_id', column: c, outcomeColumn, available, populated: n };
+    console.warn(`[reconcile] contacts.${c} exists but is NULL on every row with a ` +
+      `bot_call_at — not usable as a link, trying the next candidate`);
+  }
+
   for (const c of PHONE_COLUMNS) {
-    if (has(c)) return { ok: true, by: 'phone', column: c, available };
+    if (!has(c)) continue;
+    const n = await populated(c);
+    if (n > 0) return { ok: true, by: 'phone', column: c, outcomeColumn, available, populated: n };
+    console.warn(`[reconcile] contacts.${c} exists but is NULL on every row with a ` +
+      `bot_call_at — not usable as a link, trying the next candidate`);
   }
 
   return {
     ok: false,
-    reason: 'no usable link column found on contacts',
+    reason: 'no populated link column found on contacts',
     available,
   };
 }
@@ -116,8 +193,12 @@ export async function reconcileOutcomes(db, apply, { dryRun = false } = {}) {
        right(regexp_replace(rc.phone_e164,          '[^0-9]', '', 'g'), 10)
        AND length(regexp_replace(rc.phone_e164, '[^0-9]', '', 'g')) >= 10`;
 
+  const outcomeSelect = link.outcomeColumn
+    ? `ct.${link.outcomeColumn}::text AS ingest_outcome`
+    : `NULL::text AS ingest_outcome`;
+
   const { rows: matches } = await db.query(
-    `SELECT DISTINCT rc.id, rc.phone_e164, ct.bot_call_at
+    `SELECT DISTINCT rc.id, rc.phone_e164, ct.bot_call_at, ${outcomeSelect}
        FROM re_contact rc
        JOIN contacts ct ON ${joinClause}
       WHERE rc.status = 'in_flight'
@@ -136,24 +217,39 @@ export async function reconcileOutcomes(db, apply, { dryRun = false } = {}) {
     return { skipped: false, matched: 0, applied: 0, link };
   }
 
+  // Map before doing anything, so a dry run shows exactly what would be written.
+  for (const m of matches) m.mapped = mapIngestOutcome(m.ingest_outcome);
+
+  const tally = matches.reduce((acc, m) => {
+    acc[m.mapped] = (acc[m.mapped] || 0) + 1;
+    return acc;
+  }, {});
+  const breakdown = Object.entries(tally)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${v} ${k}`)
+    .join(', ');
+
   if (dryRun) {
-    console.log(`[reconcile] DRY RUN — would mark ${matches.length} contact(s) reached ` +
-      `via ${link.by} on contacts.${link.column}`);
-    for (const m of matches) console.log(`  would reach ${m.phone_e164}`);
-    return { skipped: false, matched: matches.length, applied: 0, link };
+    console.log(`[reconcile] DRY RUN — would resolve ${matches.length} contact(s) ` +
+      `via ${link.by} on contacts.${link.column}: ${breakdown}`);
+    for (const m of matches) {
+      console.log(`  ${m.phone_e164} -> ${m.mapped}` +
+        (m.ingest_outcome ? ` (ingest label: ${m.ingest_outcome})` : ' (no ingest label; floor is reached)'));
+    }
+    return { skipped: false, matched: matches.length, applied: 0, tally, link };
   }
 
   let applied = 0;
   for (const m of matches) {
     try {
-      await apply(db, { contactId: m.id, outcome: 'reached' });
+      await apply(db, { contactId: m.id, outcome: m.mapped });
       applied++;
     } catch (err) {
       console.error(`[reconcile] failed on contact ${m.id}: ${err.message}`);
     }
   }
 
-  console.log(`[reconcile] ${applied}/${matches.length} marked reached from the ` +
-    `SimpleTalk ingest (link: ${link.by} on contacts.${link.column})`);
-  return { skipped: false, matched: matches.length, applied, link };
+  console.log(`[reconcile] ${applied}/${matches.length} resolved from the SimpleTalk ` +
+    `ingest (link: ${link.by} on contacts.${link.column}): ${breakdown}`);
+  return { skipped: false, matched: matches.length, applied, tally, link };
 }
