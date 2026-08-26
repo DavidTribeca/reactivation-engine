@@ -97,29 +97,70 @@ const JOBS = [
  */
 const execFileAsync = promisify(execFile);
 
+/**
+ * Pull the JSON report out of a script's stdout.
+ *
+ * The scripts print their report and then keep talking — health-check.js logs
+ * "[alert] webhook 200" AFTER the JSON once RE_ALERT_WEBHOOK is set. Parsing
+ * from the first "{" to the end of the buffer therefore fed JSON.parse a
+ * trailing line and threw, which discarded the entire report. That is exactly
+ * what happened on the watchdog's first live run on 26 Aug 2026: the check
+ * fired, found real problems and exited 1, and all Railway showed was a bare
+ * "Command failed" with no reason attached.
+ *
+ * So: take the first "{" to the LAST "}" and never let a parse failure lose
+ * the underlying error.
+ */
+function parseReport(out) {
+  if (!out) return null;
+  const start = out.indexOf('{');
+  const end = out.lastIndexOf('}');
+  if (start < 0 || end <= start) return null;
+  try {
+    return JSON.parse(out.slice(start, end + 1));
+  } catch {
+    return null;
+  }
+}
+
+/** Echo the script's own [alert] lines so webhook delivery is visible here. */
+function echoAlertLines(out) {
+  for (const line of String(out || '').split('\n')) {
+    if (line.startsWith('[alert]')) console.log(line);
+  }
+}
+
 async function runScript(relPath) {
   try {
-    const { stdout } = await execFileAsync(process.execPath, [relPath], {
+    const { stdout, stderr } = await execFileAsync(process.execPath, [relPath], {
       cwd: process.cwd(),
       env: process.env,
       timeout: 120_000,
       maxBuffer: 4 * 1024 * 1024,
     });
-    const parsed = JSON.parse(stdout.slice(stdout.indexOf('{')));
-    return { status: parsed.status, summary: parsed.summary };
+    echoAlertLines(stdout);
+    if (stderr) echoAlertLines(stderr);
+    const parsed = parseReport(stdout);
+    return parsed
+      ? { status: parsed.status, summary: parsed.summary }
+      : { status: 'UNKNOWN', summary: 'script produced no parseable report' };
   } catch (err) {
     // Exit code 1 means CRITICAL findings, not a crash — surface the summary.
-    if (err.stdout) {
-      try {
-        const parsed = JSON.parse(err.stdout.slice(err.stdout.indexOf('{')));
-        const codes = (parsed.findings || [])
-          .filter((f) => f.level === 'CRITICAL').map((f) => f.code).join(', ');
-        throw new Error(`${parsed.status}: ${parsed.summary} [${codes}]`);
-      } catch (parseErr) {
-        if (parseErr.message.startsWith('CRITICAL')) throw parseErr;
-      }
+    echoAlertLines(err.stdout);
+    echoAlertLines(err.stderr);
+    const parsed = parseReport(err.stdout);
+    if (parsed) {
+      const codes = (parsed.findings || [])
+        .filter((f) => f.level === 'CRITICAL')
+        .map((f) => f.code)
+        .join(', ');
+      throw new Error(`${parsed.status}: ${parsed.summary}${codes ? ` [${codes}]` : ''}`);
     }
-    throw err;
+    // No report at all — a genuine crash. The child's stderr is the only clue
+    // there is, and swallowing it is how a broken watchdog stays broken.
+    const detail = String(err.stderr || '').trim().split('\n').slice(0, 12).join(' | ');
+    throw new Error(`${relPath} produced no report: ${err.message.split('\n')[0]}` +
+      (detail ? ` — stderr: ${detail}` : ' — stderr was empty'));
   }
 }
 
