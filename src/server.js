@@ -25,6 +25,8 @@
 
 import express from 'express';
 import cron from 'node-cron';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { makePool } from './reactivation/db.js';
 
 import { runDispatch, reapStaleInFlight, nightlyRollup, recordOutcome }
@@ -74,7 +76,52 @@ const JOBS = [
     console.log(`[rollup] rollover: ${roll.pct === null ? 'unavailable' : (roll.pct * 100).toFixed(1) + '%'} — ${roll.reason}`);
     return nightlyRollup(db, { rolloverPct: roll.pct });
   }],
+  // The watchdog. Every safety mechanism in this engine fails CLOSED — a stale
+  // suppression sync halts dialing, a full in-flight ceiling pauses intake, a
+  // red throttle cuts volume. Correct, but silent. scripts/health-check.js
+  // exists to turn silence into a page, and it documented this exact schedule
+  // in its own header while never being wired to anything: it had not run once
+  // as of 26 Aug 2026, which is why a four-week ISA backlog went unnoticed.
+  ['0 8,13,20 * * *', 'health-check', () => runScript('scripts/health-check.js')],
 ];
+
+/**
+ * Run a script from scripts/ in its own process.
+ *
+ * health-check.js calls process.exit() by design — non-zero on CRITICAL, so
+ * Railway's cron-failure alerting fires as a second independent channel. That
+ * makes it unsafe to import into this process: a critical finding would take
+ * the server down with it. So it runs as a child, and a non-zero exit is
+ * re-thrown here so the cron wrapper logs it as FAILED, which is exactly the
+ * signal we want.
+ */
+const execFileAsync = promisify(execFile);
+
+async function runScript(relPath) {
+  try {
+    const { stdout } = await execFileAsync(process.execPath, [relPath], {
+      cwd: process.cwd(),
+      env: process.env,
+      timeout: 120_000,
+      maxBuffer: 4 * 1024 * 1024,
+    });
+    const parsed = JSON.parse(stdout.slice(stdout.indexOf('{')));
+    return { status: parsed.status, summary: parsed.summary };
+  } catch (err) {
+    // Exit code 1 means CRITICAL findings, not a crash — surface the summary.
+    if (err.stdout) {
+      try {
+        const parsed = JSON.parse(err.stdout.slice(err.stdout.indexOf('{')));
+        const codes = (parsed.findings || [])
+          .filter((f) => f.level === 'CRITICAL').map((f) => f.code).join(', ');
+        throw new Error(`${parsed.status}: ${parsed.summary} [${codes}]`);
+      } catch (parseErr) {
+        if (parseErr.message.startsWith('CRITICAL')) throw parseErr;
+      }
+    }
+    throw err;
+  }
+}
 
 async function stampSync(ok, detail) {
   await db.query(
