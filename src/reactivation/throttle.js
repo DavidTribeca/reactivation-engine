@@ -36,7 +36,18 @@ export const MIN_SAMPLE = {
 };
 
 export const RAMP = {
-  floor:          100,
+  // ── WHY THIS IS NOT 100 ────────────────────────────────────────────────
+  //
+  // It was. With floor 100 and redCutPct 0.50, nextTarget(100, red) returns
+  // max(100, 50) = 100 — a red verdict at the starting cap is a no-op, and the
+  // program cannot throttle itself down at the only volume it has ever run at.
+  // That is visible in the 19-20 Aug 2026 logs: two consecutive RED days on a
+  // collapsing answer rate, target unchanged at 100 both times.
+  //
+  // A floor is meant to stop the ramp winding down to nothing, not to outrank
+  // the emergency brake. 25 leaves the brake two full cuts of room (100 -> 50
+  // -> 25) before it bottoms out.
+  floor:          Number(process.env.RE_RAMP_FLOOR || 25),
   ceiling:        750,
   greenStepPct:   0.25,
   redCutPct:      0.50,
