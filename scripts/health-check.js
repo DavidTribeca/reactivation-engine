@@ -24,7 +24,7 @@
  */
 
 import { makePool, programDate } from '../src/reactivation/db.js';
-
+import { measureRolloverPct } from '../src/reactivation/adapters/isa-list.js';
 const WEBHOOK = process.env.RE_ALERT_WEBHOOK || null;
 const ALERT_ON_WARNING = process.env.RE_ALERT_ON_WARNING === 'true';
 const TZ = process.env.TZ_NAME || 'America/Los_Angeles';
@@ -157,7 +157,63 @@ async function main() {
       { optouts: oo.optouts, connects: oo.connects });
   }
 
-  // ---- verdict -------------------------------------------------------------
+  // ---- 8. ISA follow-up backlog — the human side of the funnel ------------
+  //
+  // This is the check whose absence hurt. Checks 1-7 all watch the BOT: is it
+  // dialing, are pushes landing, are outcomes coming back, is the caller ID
+  // burning. None of them watch what happens after the bot succeeds.
+  //
+  // The most expensive failure in this program is a conversation the bot won
+  // and nobody called back — worse for the brand than never calling at all,
+  // and invisible to every other check here. On 26 Aug 2026 the ISA queue held
+  // 42 people with no logged call, the oldest waiting since 30 July, while
+  // rollover sat near 78% for a week. Nothing paged anyone, because nothing
+  // was looking.
+  //
+  // It is also the one failure the engine cannot fix by itself. Volume can be
+  // throttled down to limit the damage, but only a person can return a call.
+  // So this one pages.
+  try {
+    const roll = await measureRolloverPct(db);
+
+    if (roll.pct !== null && roll.pct >= 0.15) {
+      let waiting = null;
+      let oldestDays = null;
+      try {
+        const { rows: [q] } = await db.query(
+          `SELECT count(*)::int                                        AS waiting,
+                  max(floor(extract(epoch FROM now() - bot_call_at) / 86400))::int AS oldest_days
+             FROM contacts
+            WHERE completed_at IS NULL AND bot_call_at IS NOT NULL`);
+        waiting = q.waiting;
+        oldestDays = q.oldest_days;
+      } catch { /* other service's table; the percentage alone still pages */ }
+
+      add('CRITICAL', 'isa_backlog',
+        `${(roll.pct * 100).toFixed(0)}% of bot conversations went unworked (${roll.reason}).` +
+        (waiting !== null
+          ? ` ${waiting} still waiting, oldest for ${oldestDays} day(s).`
+          : '') +
+        ' Every one is someone who agreed to a call and never got one.' +
+        ' Volume is being throttled, but only a person can clear this.',
+        { rollover_pct: Number(roll.pct.toFixed(3)), escalations: roll.escalations,
+          leaked: roll.leaked, waiting, oldest_days: oldestDays });
+
+    } else if (roll.pct !== null && roll.pct > 0.05) {
+      add('WARNING', 'isa_backlog_rising',
+        `Rollover ${(roll.pct * 100).toFixed(0)}% — above the 5% target and heading for the ` +
+        `15% line where volume gets cut (${roll.reason}).`,
+        { rollover_pct: Number(roll.pct.toFixed(3)) });
+
+    } else if (roll.pct === null) {
+      add('INFO', 'rollover_unmeasurable',
+        `Rollover could not be measured: ${roll.reason}`, {});
+    }
+  } catch (e) {
+    add('WARNING', 'rollover_check_failed',
+      `The ISA backlog check itself failed: ${e.message}`, {});
+  }
+  // ----verdict  -------------------------------------------------------------
   const critical = findings.filter((f) => f.level === 'CRITICAL');
   const warnings = findings.filter((f) => f.level === 'WARNING');
   const status = critical.length ? 'CRITICAL' : warnings.length ? 'WARNING' : 'OK';
