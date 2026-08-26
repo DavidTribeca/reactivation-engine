@@ -34,6 +34,15 @@ const ALLOWED_CONSENT_TIERS = (process.env.RE_ALLOWED_CONSENT_TIERS || 'written'
 const STALE_INFLIGHT_HOURS = Number(process.env.RE_STALE_INFLIGHT_HOURS || 20);
 
 /**
+ * How many days of history the nightly rollup restates.
+ *
+ * Must comfortably exceed the lag on outcomes: the SimpleTalk ingest lands a
+ * day or two late and the reaper does not release a silent call until
+ * STALE_INFLIGHT_HOURS have passed. Ten days covers a 72-hour fuse with room
+ * to spare.
+ */
+const ROLLUP_BACKFILL_DAYS = Number(process.env.RE_ROLLUP_BACKFILL_DAYS || 10);
+/**
  * How the daily target is spread across dialing windows. Shares are of the
  * DAILY target, not of each other, and they intentionally sum above 1.0 so a
  * quiet morning can still be made up in the afternoon without exceeding the
@@ -662,29 +671,48 @@ export async function nightlyRollup(db, { rolloverPct = null, now = new Date() }
   // Same program-day definition the dispatcher used when it wrote the ledger
   // row this rollup is about to fill in. The rollup runs at 21:30 Pacific,
   // which under UTC days was already tomorrow.
-  const today = programDate(now);
+    const today = programDate(now);
 
-  await db.query(
+  // pushed_at::date is already the Pacific calendar day — makePool() sets the
+  // session timezone, so this agrees with programDate() and with current_date.
+  const { rowCount } = await db.query(
     `WITH d AS (
        SELECT
+         pushed_at::date                                                 AS day,
          count(*) FILTER (WHERE outcome IS NOT NULL)                     AS resolved,
          count(*) FILTER (WHERE outcome IN ('reached','appointment'))     AS reached,
          count(*) FILTER (WHERE outcome = 'appointment')                  AS appts,
          count(*) FILTER (WHERE outcome = 'opted_out')                    AS optouts
        FROM re_attempt
-       WHERE pushed_at::date = $1
+       WHERE push_ok
+         AND pushed_at::date > $1::date - $2::int
+       GROUP BY 1
      )
      UPDATE re_daily_release r
-        SET answer_rate  = CASE WHEN d.resolved > 0 THEN d.reached::numeric / d.resolved END,
-            optout_rate  = CASE WHEN d.reached  > 0 THEN d.optouts::numeric / d.reached  END,
-            reached_count = d.reached,
+        SET answer_rate       = CASE WHEN d.resolved > 0
+                                     THEN d.reached::numeric / d.resolved END,
+            optout_rate       = CASE WHEN d.reached  > 0
+                                     THEN d.optouts::numeric / d.reached  END,
+            reached_count     = d.reached,
             appointment_count = d.appts,
-            rollover_pct = COALESCE($2, r.rollover_pct),
-            updated_at = now()
+            updated_at        = now()
        FROM d
-      WHERE r.release_date = $1`,
-    [today, rolloverPct],
+      WHERE r.release_date = d.day`,
+    [today, ROLLUP_BACKFILL_DAYS],
   );
 
-  console.log(`[rollup] ${today} written`);
+  // rollover_pct is a point-in-time reading of the ISA queue as it stands
+  // tonight. It describes today and must not be smeared backwards over the
+  // days just restated.
+  if (rolloverPct !== null) {
+    await db.query(
+      `UPDATE re_daily_release
+          SET rollover_pct = $2, updated_at = now()
+        WHERE release_date = $1`,
+      [today, rolloverPct],
+    );
+  }
+
+  console.log(`[rollup] ${today} written; restated ${rowCount} day(s) ` +
+    `across the last ${ROLLUP_BACKFILL_DAYS}`);
 }
