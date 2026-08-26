@@ -136,8 +136,13 @@ export async function resolveLink(db) {
     return { ok: true, by, column: forced, outcomeColumn, available, forced: true };
   }
 
+  // Remembered while probing, so an unpopulated table can still be joined
+  // rather than abandoned. See the fallback below.
+  let firstExisting = null;
+
   for (const c of FUB_ID_COLUMNS) {
     if (!has(c)) continue;
+    if (!firstExisting) firstExisting = { by: 'fub_id', column: c };
     const n = await populated(c);
     if (n > 0) return { ok: true, by: 'fub_id', column: c, outcomeColumn, available, populated: n };
     console.warn(`[reconcile] contacts.${c} exists but is NULL on every row with a ` +
@@ -146,15 +151,30 @@ export async function resolveLink(db) {
 
   for (const c of PHONE_COLUMNS) {
     if (!has(c)) continue;
+    if (!firstExisting) firstExisting = { by: 'phone', column: c };
     const n = await populated(c);
     if (n > 0) return { ok: true, by: 'phone', column: c, outcomeColumn, available, populated: n };
     console.warn(`[reconcile] contacts.${c} exists but is NULL on every row with a ` +
       `bot_call_at — not usable as a link, trying the next candidate`);
   }
 
+  // ── WHY THIS FALLS BACK INSTEAD OF FAILING ────────────────────────────────
+  //
+  // "No column carries data" is not the same as "no column is usable". It is
+  // the normal state of a fresh install, and of any day the ingest has not
+  // written to yet. An earlier version returned ok:false here, which switched
+  // the reconciler off entirely in that situation — worse than a join that
+  // matches nothing, because a join matching nothing still picks up the first
+  // real row the moment it lands, whereas skipping does not.
+  if (firstExisting) {
+    console.warn(`[reconcile] no candidate link column carries data yet — ` +
+      `provisionally joining on contacts.${firstExisting.column}`);
+    return { ok: true, ...firstExisting, outcomeColumn, available, populated: 0 };
+  }
+
   return {
     ok: false,
-    reason: 'no populated link column found on contacts',
+    reason: 'no usable link column found on contacts',
     available,
   };
 }
