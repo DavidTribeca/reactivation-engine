@@ -25,9 +25,28 @@
 
 import { makePool, programDate } from '../src/reactivation/db.js';
 import { measureRolloverPct } from '../src/reactivation/adapters/isa-list.js';
+import { DISPATCH_SLOTS } from '../src/reactivation/schedule.js';
 const WEBHOOK = process.env.RE_ALERT_WEBHOOK || null;
 const ALERT_ON_WARNING = process.env.RE_ALERT_ON_WARNING === 'true';
 const TZ = process.env.TZ_NAME || 'America/Los_Angeles';
+
+// The check has to read the SAME configuration the dispatcher reads, or it
+// reports on an engine that does not exist. Both of these were assumed rather
+// than read, and both produced a CRITICAL page on 26 Aug 2026 for a system that
+// was behaving exactly as configured.
+const ACTUATOR = process.env.RE_ACTUATOR || 'fub_tag';
+const ONLY_WINDOWS = (process.env.RE_ONLY_WINDOWS || '')
+  .split(',').map((s) => s.trim()).filter(Boolean);
+
+/** Windows a slot can dial into — 'mid_morning / saturday_am' is two. */
+const slotWindows = (slot) => slot.window.split('/').map((w) => w.trim());
+
+/** Is this slot allowed to dial at all under the current window lock? */
+const slotEnabled = (slot) =>
+  !ONLY_WINDOWS.length || slotWindows(slot).some((w) => ONLY_WINDOWS.includes(w));
+
+/** The slots that will actually dial on this day of week. */
+const slotsOn = (dow) => DISPATCH_SLOTS.filter((s) => s.dows.includes(dow) && slotEnabled(s));
 
 const findings = [];
 const add = (level, code, message, detail) =>
@@ -52,9 +71,20 @@ async function main() {
   const today = programDate();
   const hour = localHour();
   const dow = localDow();
-  const isDialingDay = dow !== 0;
-  // Only judge "did we dial today" after the first window has closed.
-  const pastFirstWindow = hour >= 13;
+  // ── WHY THIS IS NOT `hour >= 13` ──────────────────────────────────────────
+  //
+  // It was. And RE_ONLY_WINDOWS is set to late_afternoon, so the only slot that
+  // dials all day is 16:00. The 13:00 run therefore looked at a queue that had
+  // not been touched yet, concluded the dispatcher was "not running or blocked",
+  // and paged CRITICAL. It would have done that every single day forever, and
+  // an alert that cries wolf daily is worse than no alert: people mute it, and
+  // then miss the real one underneath.
+  //
+  // So judge only after the LAST slot that is actually enabled today has run.
+  const todaysSlots = slotsOn(dow);
+  const isDialingDay = todaysSlots.length > 0;
+  const lastSlotHour = isDialingDay ? Math.max(...todaysSlots.map((s) => s.hour)) : null;
+  const pastFirstWindow = isDialingDay && hour > lastSlotHour;
 
   // ---- 1. suppression freshness — dialing is HALTED if stale --------------
   const { rows: [sup] } = await db.query(
@@ -80,8 +110,11 @@ async function main() {
       `SELECT count(*)::int AS n FROM re_contact WHERE status = 'eligible'`);
     if (Number(remaining.rows[0].n) > 0) {
       add('CRITICAL', 'no_dials_today',
-        'No dials pushed today despite a non-empty queue. The dispatcher is not running or is blocked.',
-        { eligible_remaining: remaining.rows[0].n, throttle: ledger?.throttle_reason });
+        `No dials pushed today despite a non-empty queue, and the last enabled ` +
+        `window (${lastSlotHour}:00) has passed. The dispatcher is not running or is blocked.`,
+        { eligible_remaining: remaining.rows[0].n, throttle: ledger?.throttle_reason,
+          last_slot_hour: lastSlotHour,
+          window_lock: ONLY_WINDOWS.length ? ONLY_WINDOWS.join(',') : 'none' });
     } else {
       add('INFO', 'queue_empty', 'No dials because the queue is empty — the program may be complete.', {});
     }
@@ -126,25 +159,34 @@ async function main() {
   }
 
   // ---- 6. caller-ID reputation --------------------------------------------
-  const { rows: numbers } = await db.query(
-    `SELECT count(*) FILTER (WHERE active)::int AS active_numbers FROM re_caller_number`);
-  if (Number(numbers[0].active_numbers) === 0) {
-    add('CRITICAL', 'no_caller_numbers', 'No active caller numbers configured.', {});
-  } else if (Number(numbers[0].active_numbers) < 4 && Number(ledger?.target_dials || 0) > 400) {
-    add('WARNING', 'too_few_numbers',
-      `Only ${numbers[0].active_numbers} active numbers for a ${ledger.target_dials}/day target — ` +
-      `each will exceed safe volume and get flagged.`, {});
-  }
-
-  try {
-    const { rows: retire } = await db.query(
-      `SELECT from_number, answer_rate_pct FROM re_v_number_health WHERE recommendation = 'RETIRE'`);
-    if (retire.length) {
-      add('WARNING', 'retire_numbers',
-        `${retire.length} caller number(s) are answering well below the pool median — likely flagged as spam.`,
-        { numbers: retire.map((r) => r.from_number) });
+  //
+  // Only under the ghl_workflow actuator. Under fub_tag — the live setup — the
+  // engine tags the person in FUB and SimpleTalk places the call, choosing the
+  // caller ID itself by area code. The engine never picks a number, so
+  // re_caller_number is CORRECTLY empty and re_v_number_health is CORRECTLY
+  // blank. Paging "no active caller numbers configured" for that is paging for
+  // a table the running configuration does not use. See dispatcher.js:415.
+  if (ACTUATOR === 'ghl_workflow') {
+    const { rows: numbers } = await db.query(
+      `SELECT count(*) FILTER (WHERE active)::int AS active_numbers FROM re_caller_number`);
+    if (Number(numbers[0].active_numbers) === 0) {
+      add('CRITICAL', 'no_caller_numbers', 'No active caller numbers configured.', {});
+    } else if (Number(numbers[0].active_numbers) < 4 && Number(ledger?.target_dials || 0) > 400) {
+      add('WARNING', 'too_few_numbers',
+        `Only ${numbers[0].active_numbers} active numbers for a ${ledger.target_dials}/day target — ` +
+        `each will exceed safe volume and get flagged.`, {});
     }
-  } catch { /* view needs data; ignore when empty */ }
+
+    try {
+      const { rows: retire } = await db.query(
+        `SELECT from_number, answer_rate_pct FROM re_v_number_health WHERE recommendation = 'RETIRE'`);
+      if (retire.length) {
+        add('WARNING', 'retire_numbers',
+          `${retire.length} caller number(s) are answering well below the pool median — likely flagged as spam.`,
+          { numbers: retire.map((r) => r.from_number) });
+      }
+    } catch { /* view needs data; ignore when empty */ }
+  }
 
   // ---- 7. opt-out spike ----------------------------------------------------
   const { rows: [oo] } = await db.query(
@@ -227,15 +269,18 @@ async function main() {
       ? `Healthy. ${pushed.n} dials today, ${flow.in_flight_now} in flight, ${flow.due_now} due now.`
       : `${critical.length} critical, ${warnings.length} warning.`,
     findings,
+    // Postgres returns count() as a STRING through pg, to protect bigints. So
+    // `scheduled_later + due_now` concatenated instead of adding: 4323 and 111
+    // were reported to Slack as "4323111 remaining". Coerce every one of them.
     snapshot: {
-      pushed_today: pushed.n,
+      pushed_today: Number(pushed.n),
       target_today: ledger?.target_dials ?? null,
       throttle_state: ledger?.throttle_state ?? null,
-      in_flight: flow.in_flight_now,
-      due_now: flow.due_now,
-      remaining_eligible: flow.scheduled_later + flow.due_now,
-      reached_total: flow.reached_total,
-      appointments_total: flow.appointments_total,
+      in_flight: Number(flow.in_flight_now),
+      due_now: Number(flow.due_now),
+      remaining_eligible: Number(flow.scheduled_later) + Number(flow.due_now),
+      reached_total: Number(flow.reached_total),
+      appointments_total: Number(flow.appointments_total),
     },
   };
 
