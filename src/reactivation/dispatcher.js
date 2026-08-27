@@ -16,7 +16,8 @@
 
 import { nextAttempt, isWithinDialWindow, currentWindowLabel, MAX_ATTEMPTS_PER_7_DAYS } from './ladder.js';
 import { programDate } from './db.js';
-import { evaluate, nextTarget, RAMP } from './throttle.js';
+import { evaluate, nextTarget, RAMP, MIN_SAMPLE } from './throttle.js';
+import { measureRolloverPct } from './adapters/isa-list.js';
 import * as ghl from './adapters/ghl.js';
 import * as fub from './adapters/fub.js';
 
@@ -163,9 +164,41 @@ export async function resolveTarget(db, today) {
        FROM re_daily_release
        WHERE release_date > current_date - 7 AND rollover_pct IS NOT NULL`);
 
+    // ── WHY THE RECONSTRUCTION IS NOT TRUSTED ON ITS OWN ────────────────────
+    //
+    // That query needs `rollover_pct IS NOT NULL`, and only the nightly rollup
+    // writes that column — for a single day at a time. So the sum is taken over
+    // at most one ledger row, and if that row's reached_count is 0 the whole
+    // thing collapses to zero escalations.
+    //
+    // Which is exactly what happened. On 26 Aug 2026 the dispatcher logged
+    // "rollover: insufficient data (0 escalations)" and passed the day green,
+    // while the rollup that same night measured rollover at 78.6%. The single
+    // most important brake in this engine — the one that says humans cannot
+    // absorb the volume — had never once engaged, because its input was being
+    // reconstructed from a ledger column that is almost always empty.
+    //
+    // measureRolloverPct() does not reconstruct anything: it counts escalated
+    // conversations and unworked ones directly off the contacts table. When the
+    // ledger cannot muster a usable sample, ask the source.
+    let escalations7d = Number(r.escalations7d);
+    let leaked7d = Number(r.leaked7d);
+    let rolloverSource = 'ledger';
+
+    if (escalations7d < MIN_SAMPLE.escalationsForRollover) {
+      const live = await measureRolloverPct(db);
+      if (live.escalations > escalations7d) {
+        escalations7d = live.escalations;
+        leaked7d = live.leaked;
+        rolloverSource = 'measured';
+        console.log(`[dispatch] ledger had ${r.escalations7d} escalations — ` +
+          `measured directly instead: ${live.reason}`);
+      }
+    }
+
     const verdict = evaluate({
-      escalations7d: Number(r.escalations7d),
-      leaked7d:      Number(r.leaked7d),
+      escalations7d,
+      leaked7d,
       resolved7d:    Number(w.resolved7d),
       connects7d:    Number(w.connects7d),
       optOuts7d:     Number(w.optouts7d),
@@ -175,7 +208,8 @@ export async function resolveTarget(db, today) {
 
     target = nextTarget(Number(p.target_dials), verdict);
     state = verdict.state;
-    reason = verdict.reasons.join('; ') || 'all metrics within target';
+    reason = (verdict.reasons.join('; ') || 'all metrics within target') +
+      (rolloverSource === 'measured' ? ' [rollover measured live, not from the ledger]' : '');
 
     // VOLUME SPIKE GUARD. The throttle can only step up 25% at a time, but a
     // mistyped DAILY_CAP or a hand-edited ledger row could still produce a
