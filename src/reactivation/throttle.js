@@ -35,6 +35,32 @@ export const MIN_SAMPLE = {
   escalationsForRollover: 10,
 };
 
+/**
+ * Does the ISA follow-up backlog get a vote on call volume?
+ *
+ * RE_ROLLOVER_GOVERNS=false separates MEASUREMENT from CONTROL. Rollover is
+ * still measured, still logged, and the watchdog still pages CRITICAL on it —
+ * nothing about visibility changes. What changes is that it stops capping
+ * outreach.
+ *
+ * WHY YOU MIGHT WANT THAT. Rollover is a human-capacity number. Throttling the
+ * bot does not add follow-up capacity; it just means fewer of the 23,000 records
+ * get worked while they age. If the follow-up side is being staffed and owned
+ * separately, letting it govern the dialer means one team's backlog silently
+ * decides another team's throughput.
+ *
+ * WHAT YOU GIVE UP. This is the only automatic feedback loop between promising
+ * someone a callback and delivering one. With it off, nothing stops the program
+ * from generating conversations faster than they can be honoured, and every
+ * unworked one is a person who agreed to a call and got nothing. The watchdog
+ * becomes the sole warning, and a warning only works if somebody acts on it.
+ *
+ * Answer rate and opt-out rate keep their votes either way. Those measure the
+ * BOT — caller-ID reputation and script/targeting quality — and no staffing
+ * decision makes a rising opt-out rate acceptable.
+ */
+export const ROLLOVER_GOVERNS = process.env.RE_ROLLOVER_GOVERNS !== 'false';
+
 export const RAMP = {
   // ── WHY THIS IS NOT 100 ────────────────────────────────────────────────
   //
@@ -78,8 +104,14 @@ export function evaluate(m) {
   // --- rollover: human capacity ---
   if (m.escalations7d >= MIN_SAMPLE.escalationsForRollover) {
     const rollover = m.leaked7d / m.escalations7d;
+    // Measured and reported whether or not it is allowed to govern. Turning the
+    // brake off must never turn the instrument off — that is how a known problem
+    // becomes an invisible one.
     signals.rollover = rollover;
-    if (rollover >= THRESHOLDS.rollover.red) {
+    if (!ROLLOVER_GOVERNS) {
+      reasons.push(`rollover ${pct(rollover)} over 7d — REPORTED ONLY, ` +
+        `not capping volume (RE_ROLLOVER_GOVERNS=false)`);
+    } else if (rollover >= THRESHOLDS.rollover.red) {
       bump('red', `rollover ${pct(rollover)} over 7d — ISA follow-up cannot absorb current volume`);
     } else if (rollover > THRESHOLDS.rollover.green) {
       bump('yellow', `rollover ${pct(rollover)} above ${pct(THRESHOLDS.rollover.green)} target`);
