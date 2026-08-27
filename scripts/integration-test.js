@@ -9,6 +9,7 @@
  */
 
 import { makePool, programDate, TZ } from '../src/reactivation/db.js';
+import { ROLLOVER_GOVERNS } from '../src/reactivation/throttle.js';
 import { resolveTarget, runDispatch, recordOutcome, reapStaleInFlight, nightlyRollup }
   from '../src/reactivation/dispatcher.js';
 import { currentWindowLabel, isWithinDialWindow, localWallTimeToUtc, localParts }
@@ -420,10 +421,24 @@ async function main() {
   // 200 escalations with 40% rollover = 80 leaked, far above the 15% red line.
   await db.query(`DELETE FROM re_daily_release WHERE release_date = $1::date`, [TODAY]);
   const ledRed = await resolveTarget(db, TODAY);
-  check('throttle SEES real rollover and goes red',
-    ledRed.throttle_state === 'red', `state=${ledRed.throttle_state} reason=${ledRed.throttle_reason}`);
-  check('red throttle actually cuts volume',
-    Number(ledRed.target_dials) < 400, `target=${ledRed.target_dials}`);
+  // These two assertions depend on whether rollover is allowed to GOVERN.
+  // RE_ROLLOVER_GOVERNS=false is a supported configuration — outreach volume
+  // deliberately decoupled from ISA follow-up capacity — so the suite asserts
+  // the correct behaviour for the mode it is running in rather than failing.
+  // The third assertion holds either way: the reason must always cite a real
+  // rollover figure, because turning the brake off must not turn the
+  // instrument off.
+  if (ROLLOVER_GOVERNS) {
+    check('throttle SEES real rollover and goes red',
+      ledRed.throttle_state === 'red', `state=${ledRed.throttle_state} reason=${ledRed.throttle_reason}`);
+    check('red throttle actually cuts volume',
+      Number(ledRed.target_dials) < 400, `target=${ledRed.target_dials}`);
+  } else {
+    check('rollover does NOT force red when it is report-only',
+      ledRed.throttle_state !== 'red', `state=${ledRed.throttle_state}`);
+    check('rollover does NOT cut volume when it is report-only',
+      Number(ledRed.target_dials) >= 400, `target=${ledRed.target_dials}`);
+  }
   check('throttle reason cites rollover, not "insufficient data"',
     /rollover \d/.test(ledRed.throttle_reason || ''), ledRed.throttle_reason);
 
