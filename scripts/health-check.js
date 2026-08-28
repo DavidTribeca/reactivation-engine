@@ -26,6 +26,7 @@
 import { makePool, programDate } from '../src/reactivation/db.js';
 import { measureRolloverPct } from '../src/reactivation/adapters/isa-list.js';
 import { DISPATCH_SLOTS } from '../src/reactivation/schedule.js';
+import { ROLLOVER_GOVERNS } from '../src/reactivation/throttle.js';
 const WEBHOOK = process.env.RE_ALERT_WEBHOOK || null;
 const ALERT_ON_WARNING = process.env.RE_ALERT_ON_WARNING === 'true';
 const TZ = process.env.TZ_NAME || 'America/Los_Angeles';
@@ -231,15 +232,27 @@ async function main() {
         oldestDays = q.oldest_days;
       } catch { /* other service's table; the percentage alone still pages */ }
 
+      // The closing sentence has to match the configuration, or the alert lies.
+      // It read "Volume is being throttled" unconditionally — written when
+      // rollover still governed the throttle. With RE_ROLLOVER_GOVERNS=false
+      // that is simply false, and an alert that misstates what the system is
+      // doing is worse than no alert: it tells the reader a brake is holding
+      // when nothing is.
+      const consequence = ROLLOVER_GOVERNS
+        ? ' Volume is being throttled, but only a person can clear this.'
+        : ' Volume is NOT being cut for this — outreach is deliberately decoupled' +
+          ' from the follow-up queue — so this list only grows until a person works it.';
+
       add('CRITICAL', 'isa_backlog',
         `${(roll.pct * 100).toFixed(0)}% of bot conversations went unworked (${roll.reason}).` +
         (waiting !== null
           ? ` ${waiting} still waiting, oldest for ${oldestDays} day(s).`
           : '') +
         ' Every one is someone who agreed to a call and never got one.' +
-        ' Volume is being throttled, but only a person can clear this.',
+        consequence,
         { rollover_pct: Number(roll.pct.toFixed(3)), escalations: roll.escalations,
-          leaked: roll.leaked, waiting, oldest_days: oldestDays });
+          leaked: roll.leaked, waiting, oldest_days: oldestDays,
+          rollover_governs: ROLLOVER_GOVERNS });
 
     } else if (roll.pct !== null && roll.pct > 0.05) {
       add('WARNING', 'isa_backlog_rising',
